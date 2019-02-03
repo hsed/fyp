@@ -1,128 +1,142 @@
 import os
-import numpy as np
 import sys
 import struct
+import time
+
+from enum import IntEnum
+
+import cv2
+import numpy as np
 from torch.utils.data import Dataset
 
 #### TO HEAVILY EDIT TO SUPPORT HAND ACTION DATASET
-## starting from 1, each component of y_gt_mm_keypoints is
-# --1(wrist) -- index0
-# --2(index_mcp), 3(index_pip), 4(index_dip), 5(index_tip)
-# --6(middle_mcp), 7(middle_pip), 8(middle_dip), 9(middle_tip)
-# --10(ring_mcp), 11(ring_pip), 12(ring_dip), 13(ring_tip)
-# --14(little_mcp), 15(little_pip), 16(little_dip), 17(little_tip)
-# --18(thumb_mcp), 19(thumb_pip), 20(thumb_dip), 21(thumb_tip) -- index20
+## starting from 0, each component of y_gt_mm_keypoints is
+# --0(wrist)
+# --1(thumb_mcp), 2(index_mcp), 3(middle_mcp), 4(ring_mcp), 5(pinky_mcp)
+# --6(thumb_pip), 7(thumb_dip), 8(thumb_tip),
+# --9(index_pip), 10(index_dip), 11(index_tip),
+# --12(middle_pip), 13(middle_dip), 14(middle_tip),
+# --15(ring_pip), 16(ring_dip), 17(ring_tip),
+# --18(pinky_pip), 19(pinky_dip), 20(pinky_tip),
+# total 21 joints, each having 3D co-ords
 
 
-def pixel2world(x, y, z, img_width, img_height, fx, fy):
-    # from pixel,pixel,mm values to mm,mm,mm values
-    # i.e. from a depth_map 2d matrix containing dpeth in mm
-    # to actual 3d cords plottable in 3d view
-    w_x = (x - img_width / 2) * z / fx
-    w_y = (img_height / 2 - y) * z / fy
-    w_z = z ## thi is unchanged
-    return w_x, w_y, w_z
 
 
-def world2pixel(x, y, z, img_width, img_height, fx, fy):
-    p_x = x * fx / z + img_width / 2
-    p_y = img_height / 2 - y * fy / z
-    return p_x, p_y
-
-
-def depthmap2points(image, fx, fy):
-    ## convert (x,y,z) with x,y in img (pixel) values and z in mm
-    ## to (x,y,z) ALL in mm values
-    h, w = image.shape
-    x, y = np.meshgrid(np.arange(w) + 1, np.arange(h) + 1)
-    points = np.zeros((h, w, 3), dtype=np.float32)
-    points[:,:,0], points[:,:,1], points[:,:,2] = pixel2world(x, y, image, w, h, fx, fy)
-    return points
-
-## is this the inverse of the above function?? confirm....
-## this returns something like np.meshgrid so like x,y values
-## it returns x,y and corresponding z is points[i,2] which is unchanged
-## so what you can do is:
-## let tmp_img = np.zeros((h,w)) so 2d matrix
-##  for each pixel i from 1 -> 76800:
-##    do: tmp_img[pixes[i,0], pixels[i,1]] = pixels[2]
-## check if this works by checking with original depthmap
-## if it works with orig res then u can also resize
-## also use plots to check if the shape looks somewhat ok.
-## see plotting function in old code        
-def points2pixels(points, img_width, img_height, fx, fy):
-    pixels = np.zeros((points.shape[0], 2))
-    pixels[:, 0], pixels[:, 1] = \
-        world2pixel(points[:,0], points[:, 1], points[:, 2], img_width, img_height, fx, fy)
-    return pixels
-
-
-def pixelsdepth2depthmap(pixels, deptharray, img, img_width, img_height):
-    tmp_img = np.zeros((img_height,img_width))
-    #tmp_
-
-
-def load_depthmap(filename, img_width, img_height, max_depth):
-    '''
-        Given a bin file for one sample e.g. 000000_depth.bin
-        Load the depthmap
-        Load the gt bounding box countaining sample hand
-        Clean the image by:
-            - setting depth_values within bounding box as actual
-            - setting all other depth_values to MAX_DEPTH
-        I.e. all other stuff is deleted
+# def load_depthmap(filename, img_width, img_height, max_depth):
+#     '''
+#         Given a bin file for one sample e.g. 000000_depth.bin
+#         Load the depthmap
+#         Load the gt bounding box countaining sample hand
+#         Clean the image by:
+#             - setting depth_values within bounding box as actual
+#             - setting all other depth_values to MAX_DEPTH
+#         I.e. all other stuff is deleted
         
-    '''
-    with open(filename, mode='rb') as f:
-        data = f.read()
-        _, _, left, top, right, bottom = struct.unpack('I'*6, data[:6*4])
-        num_pixel = (right - left) * (bottom - top)
-        cropped_image = struct.unpack('f'*num_pixel, data[6*4:])
-
-        cropped_image = np.asarray(cropped_image).reshape(bottom-top, -1)
-        depth_image = np.zeros((img_height, img_width), dtype=np.float32)
-        depth_image[top:bottom, left:right] = cropped_image
+#     '''
+#     with open(filename, mode='rb') as f:
         
-        ## be careful here thats not the way of deep_prior
-        ### thus we have commented this line!
-        #depth_image[depth_image == 0] = max_depth 
-        ## in deep_prior max_depth is kept at 0 and only changed in the end.
+        
+        
+#         ## be careful here thats not the way of deep_prior
+#         ### thus we have commented this line!
+#         #depth_image[depth_image == 0] = max_depth 
+#         ## in deep_prior max_depth is kept at 0 and only changed in the end.
 
-        ## plot here to see how it looks like
+#         ## plot here to see how it looks like
 
-        return depth_image
+#         return depth_image
 
 
-class MARAHandDataset(Dataset):
-    def __init__(self, root, center_dir, mode, test_subject_id, transform=None, reduce=False,
-                 use_refined_com=False):
+class DatasetMode(IntEnum):
+    TRAIN = 0
+    TEST = 1
+
+class TaskMode(IntEnum):
+    '''
+        HPE:
+            -> Each raw sample is one frame consisting of:
+                1) Depth-map -- 2D Matrix (640 x 480)
+                2) Hand Skeleton -- 2D Matrix (21 x 3)
+                3) Action Class One-Hot Label (optional to use) -- 1D Matrix (45 x 1)
+
+        HAR:
+            -> Each raw sample is a set of F frames consisting of:
+                1) Depth-maps from f=1 to t=F -- 3D Matx (F x 640 x 480)
+                2) Hand Skeletons from f=1 to t=F -- 3D Matx (F x 21 x 3)
+                3) Action Class One-Hot Label (optional to use) -- 2D Matx (F x 45)
+                4) Total Frames == F
+            -> Unless later decided, F will VARY for each sample
+    '''
+    HAR = 0
+    HPE = 1
+
+
+
+class HandPoseActionDataset(Dataset):
+    def __init__(self, root, data_mode, task_mode,  test_subject_id, transform=None, reduce=False):
         '''
             `reduce` => Train only on 1 gesture and 2 subjects, CoM won't work correctly
             `use_refined_com` => True: Use GT MCP (ID=5) ref; False: Use refined CoM pretrained.
+                                Currently disabled
+            
+            Currently this class is used to load data to train a HAR
+            Another class
         '''
-        self.img_width = 320
-        self.img_height = 240
+        self.dpt_img_width = 640 #320
+        self.dpt_img_height = 480 #240
+
+        # TO CONFIRM TODO: !!!!
         self.min_depth = 100
         self.max_depth = 700
-        self.fx = 241.42
-        self.fy = 241.42
+        
+        self.fx_d = 475.065948
+        self.fy_d = 475.065857
+
+        self.px_d = 315.944855   # aka u0_d
+        self.py_d = 245.287079   # aka v0_d
+
+        # depth intrinsic transform matrix
+        self.cam_intr_d = np.array([[self.fx_d, 0, self.px_d],
+                                    [0, self.fy_d, self.py_d], 
+                                    [0, 0, 1]])
+        
         self.joint_num = 21
         self.world_dim = 3
-        self.folder_list = ['1'] if reduce else \
-            ['1','2','3','4','5','6','7','8','9','I','IP','L','MP','RP','T','TIP','Y']
-        self.subject_num = 3 if reduce else 9 ## number of subjects
+        
+        self.reorder_idx = np.array([
+            0, 1, 6, 7, 8, 2, 9, 10, 11, 3, 12,
+            13, 14, 4, 15, 16, 17, 5, 18, 19, 20
+        ])
+        
+        self.test_pos = -1
+        
+        self.subject_num = 3 if reduce else 6 ## number of subjects
 
+        
+        ### setup directories
         self.root = root
-        self.center_dir = center_dir
-        self.mode = mode
+        self.skeleton_dir = os.path.join(self.root, 'Hand_pose_annotation_v1')
+        self.video_dir = os.path.join(self.root, 'Video_files') 
+        self.info_dir = os.path.join(self.root, 'Subjects_info')
+        self.subj_dirnames = ['Subject_1'] if reduce else \
+            ['Subject_%d' % i for i in range(1, 7)]
+        #self.center_dir = center_dir # not in use
+
+        # setup modes
+        self.data_mode = data_mode
+        self.task_mode = task_mode
+
         self.test_subject_id = test_subject_id ## do testing using this ID's data
         self.transform = transform
-        self.use_refined_com = use_refined_com
+        #self.use_refined_com = use_refined_com not in use
 
-        if not self.mode in ['train', 'test']: raise ValueError('Invalid mode')
-        assert self.test_subject_id >= 0 and self.test_subject_id < self.subject_num
+        if not self.data_mode in list(DatasetMode): raise ValueError('Invalid mode')
+        if not self.task_mode in list(TaskMode): raise ValueError('Invalid mode')
+        assert self.test_subject_id >= 0 and self.test_subject_id < len(self.subj_dirnames)
 
-        if not self._check_exists(): raise RuntimeError('Invalid MSRA hand dataset')
+        # currently a very weak check, only checks for skeletons
+        if not self._check_exists(): raise RuntimeError('Invalid Hand Pose Action Dataset')
         
         ### load all the y_values and corresponding corrected CoM values using
         ### 'train.txt' and 'center_train_refined'
@@ -132,26 +146,32 @@ class MARAHandDataset(Dataset):
         ## the x-values are loaded 'on-the-fly' as and when required.
         ## this function is called internally by pytorch whenever a new sample needs to
         ## be loaded.
-        depthmap = load_depthmap(self.names[index], self.img_width, self.img_height, self.max_depth)
-        
-        ## Note: For deep-prior we DO NOT want to do this.
-        ## are input should remain as 2D img with depth values
-        ## points = depthmap2points(depthmap, self.fx, self.fy)
-        
-        ## originally points are (240,320, 3)
-        ## later they are reshaped to (240*320==76800, 3)
-        ## points = points.reshape((-1, 3))
+        #depthmap = load_depthmap(self.names[index], self.img_width, self.img_height, self.max_depth)
+        # any depth to allow 16-it images as the depths are 16-bit here
 
-        #self.ref_pts[index], # 3d ref point of centre of mass, this is the REFINED CoM points
-        refpt = self.joints_world[index][5] if not self.use_refined_com else self.ref_pts[index]
+        if self.task_mode == TaskMode.HAR:
+            # stack sequences of 1-channel depth imgs
+            depthmaps = np.stack(
+                [cv2.imread(img_path, cv2.IMREAD_ANYDEPTH) for \
+                    img_path in self.names[index]]
+            )
+            sample = {
+                'names_seq': self.names[index], # sample names => R^{NUM_FRAMES x 1}
+                'joints_seq': self.joints_world[index], # 3d joints => R^{NUM_FRAMES x 63}
+                'coms_seq': self.coms_world[index], # => R^{NUM_FRAMES x 3}
+                'depthmaps_seq': depthmaps, # depthmaps => R^{NUM_FRAMES x 480 x 640}
+            }
 
-        sample = {
-            'name': self.names[index], # sample name
-            #'points': points, # 3d points of the sample i.e. 3d point cloud view. unneeded atm
-            'joints': self.joints_world[index], # 3d joints of the sample
-            'refpoint': refpt,
-            'depthmap': depthmap, # also send the depth map as sample
-        }
+        elif self.task_mode == TaskMode.HPE:
+            depthmap = cv2.imread(self.names[index], cv2.IMREAD_ANYDEPTH)
+            sample = {
+                'name': self.names[index], # sample name => R^{1}
+                'joint': self.joints_world[index], # 3d joints of the sample => R^{63}
+                'com': self.coms_world[index], # => R^{3}
+                'depthmap': depthmap, # depthmap => R^{480 x 640}
+            }
+
+
 
         ## a lot happens here.
         if self.transform: sample = self.transform(sample)
@@ -162,100 +182,211 @@ class MARAHandDataset(Dataset):
         return self.num_samples
 
     def _load(self):
+        
         self._compute_dataset_size()
 
-        self.num_samples = self.train_size if self.mode == 'train' else self.test_size
-        self.joints_world = np.zeros((self.num_samples, self.joint_num, self.world_dim), dtype=np.float32)
-        self.ref_pts = np.zeros((self.num_samples, self.world_dim), dtype=np.float32)
+        self._compute_action_classes()
+
+        self.num_samples = \
+            self.train_size if (self.data_mode == DatasetMode.TRAIN) \
+                            else self.test_size
+        
+        
+        
+        ### skeleton ground truth ###
+        # this will be a list of variable sized 2D matrices (HAR) OR
+        # fixed sized vectors (HPE)
         self.names = []
+        self.joints_world = []
+        self.coms_world = []
+        self.actions = []
+        
 
-        # Collect reference center points strings
-        ## ref points are collected based on TEST SSUBJ ID
-        ## center_train_TESTSUBJID_refined.txt implies the refined net was trained using 
-        ## all subjects except for the test subject and then evaluated for all subjects (incl test subject)
-        ## the train file contains results for all data so 9 * 17 * 500
-        ## the test file contains results only for one data so 17 * 500
-        if self.mode == 'train': ref_pt_file = 'center_train_' + str(self.test_subject_id) + '_refined.txt'
-        else: ref_pt_file = 'center_test_' + str(self.test_subject_id) + '_refined.txt'
 
-        with open(os.path.join(self.center_dir, ref_pt_file)) as f:
-                ref_pt_str = [l.rstrip() for l in f]
-
-        #
-        file_id = 0
-        frame_id = 0
-
-        for mid in range(self.subject_num):
-            ## for each model_id
-            if self.mode == 'train': model_chk = (mid != self.test_subject_id)
-            elif self.mode == 'test': model_chk = (mid == self.test_subject_id)
-            else: raise RuntimeError('unsupported mode {}'.format(self.mode))
+        action_split_file = os.path.join(self.root, 
+                                         'data_split_action_recognition.txt')
+        
+        with open(action_split_file) as f:
+            all_lines = f.read().splitlines()
             
-            if model_chk:
-                for fd in self.folder_list:
-                    annot_file = os.path.join(self.root, 'P'+str(mid), fd, 'joint.txt')
+            if (self.data_mode == DatasetMode.TRAIN):
+                # get only train samples
+                all_lines = all_lines[1:self.test_pos]
+            elif (self.data_mode == DatasetMode.TEST):
+                # get only test samples
+                all_lines = all_lines[self.test_pos+1:]
+            
+           # print("All_lines", all_lines[:4], all_lines[-4:])
 
-                    lines = []
-                    with open(annot_file) as f:
-                        lines = [line.rstrip() for line in f]
+        # at this stage we only have either test or train data
+        for line in all_lines:
+            line, action_idx_str = line.split(' ')[0], line.split(' ')[1]
 
-                    # skip first line as it contains an int: `num of samples`
-                    for i in range(1, len(lines)):
-                        # referece point, this contains REFINED CoM 3d co-ord
-                        splitted = ref_pt_str[file_id].split()
-                        if splitted[0] == 'invalid':
-                            print('Warning: found invalid reference frame')
-                            file_id += 1
-                            continue
-                        else:
-                            self.ref_pts[frame_id, 0] = float(splitted[0]) #CoM x
-                            self.ref_pts[frame_id, 1] = float(splitted[1]) #CoM y
-                            self.ref_pts[frame_id, 2] = float(splitted[2]) # CoM z
+            with open(os.path.join(self.skeleton_dir, line, 'skeleton.txt')) as sk_f:
+                # each sample is ONE WHOLE skeleton
+                sk_lines = sk_f.read().splitlines()
 
-                        # joint points... the gt (y-val) values in 3D for 21 joints
-                        splitted = lines[i].split()
-                        for jid in range(self.joint_num):
-                            self.joints_world[frame_id, jid, 0] = float(splitted[jid * self.world_dim])
-                            self.joints_world[frame_id, jid, 1] = float(splitted[jid * self.world_dim + 1])
-                            self.joints_world[frame_id, jid, 2] = -float(splitted[jid * self.world_dim + 2])    ## ATTENTION: NOTE THE NEGATION THUS THIS IS SAME AS DEEP-PRIOR
-                        
-                        filename = os.path.join(self.root, 'P'+str(mid), fd, '{:0>6d}'.format(i-1) + '_depth.bin')
-                        self.names.append(filename)
+            if self.task_mode == TaskMode.HAR:
+                # add in bulks
+                # e.g. Subject_1/open_juice_bottle/2 0
+                self.names.append(
+                    [os.path.join(self.video_dir, line, 'depth', img) for img in \
+                        os.listdir(
+                            os.path.join(self.video_dir, line, 'depth')
+                        )
+                    ]
+                )
 
-                        frame_id += 1   ## this may differ from i if any CoM is invalid otherwise it won't
-                        ## frame_id is used to ensure we only set samples with valid CoM values in our training/testing data matrix
-                        ## all other samples are ignored.
-                        file_id += 1 ## this is exactly same as i, so frame_id == i , so extra
+                # to get joints as a matrix per sample do:
+                # self.joints_world[0].reshape(-1, 21, 3)
+                ## append a variable sized matrix
+                self.joints_world.append(
+                    np.stack(
+                        [[float(item) for item in sk_line.split(' ')[1:]] for sk_line in sk_lines]
+                    ).astype(np.float32)
+                )
+
+                # get gt middle_mcp world co-ords x,y,z of current sample
+                self.coms_world.append(
+                    self.joints_world[-1][:, 3*self.world_dim : 3*self.world_dim+3]
+                )
+
+                self.actions.append(
+                    int(action_idx_str)
+                )
+
+            elif self.task_mode == TaskMode.HPE:
+                # add frame_wise
+                # we merge list with list of new items
+                self.names += \
+                    [os.path.join(self.video_dir, line, 'depth', img) for img in \
+                        os.listdir(
+                            os.path.join(self.video_dir, line, 'depth')
+                        )
+                    ]
+
+                new_joints_lst = \
+                    [np.array([float(item) for item in sk_line.split(' ')[1:]]) for \
+                        sk_line in sk_lines]
+                
+                self.joints_world += new_joints_lst
+                
+                # sample is 1D np.array, we extract mcp xyz from last added samples
+                self.coms_world += \
+                    [sample[3*self.world_dim : 3*self.world_dim+3] for \
+                         sample in new_joints_lst]
+
+                
+                # all samples in seq must have the same action label
+                self.actions += \
+                    [int(action_idx_str) for _ in range(len(new_joints_lst))]
+        
+
+        assert(len(self.names) == self.num_samples)
+        assert(len(self.joints_world) == self.num_samples)
+        assert(len(self.coms_world) == self.num_samples)
+        assert(len(self.actions) == self.num_samples)
+
 
     def _compute_dataset_size(self):
+        '''
+            Read `data_split_action_recognition.txt`
+            If mode is HAR then just read numbers off directly from file
+            Otherwise, if mode is HPE:
+                Get keyword '<ACTION_LABEL> <ACTION_INSTANCE>'
+                Search for keyword in subject info txt
+                Get corresponding number of frames and add to total
+            
+            Also store position of test samples in split file
+        '''
         self.train_size, self.test_size = 0, 0
 
-        for mid in range(self.subject_num):
-            num = 0
-            for fd in self.folder_list:
-                annot_file = os.path.join(self.root, 'P'+str(mid), fd, 'joint.txt')
-                with open(annot_file) as f:
-                    num = int(f.readline().rstrip())
-                if mid == self.test_subject_id:
-                    self.test_size += num
-                else: 
-                    self.train_size += num
+        action_split_file = os.path.join(self.root, 
+                                         'data_split_action_recognition.txt')
+        
+        with open(action_split_file) as f:
+            all_lines = f.read().splitlines()
+
+            if (self.task_mode == TaskMode.HAR):
+                    self.train_size = \
+                        int(([s.split(' ')[1] for i, s in \
+                                    enumerate(all_lines) if 'Training' in s])[0])
+                    test_pos, test_size = \
+                        ([(i, s.split(' ')[1]) for i, s in \
+                                    enumerate(all_lines) if 'Test' in s])[0]
+                    self.test_pos, self.test_size = test_pos, int(test_size)
+                    #####
+            elif (self.task_mode == TaskMode.HPE):
+                    curr_mode = ''
+                    for i, line in enumerate(all_lines):
+                        if 'Training' in line:
+                            curr_mode = 'TRAIN'
+                            continue    # go to next line
+                        elif 'Test' in line:
+                            self.test_pos = i
+                            curr_mode = 'TEST'
+                            continue
+                        else:
+                            # e.g. Subject_1/open_juice_bottle/2 0
+                            line = line.split(' ')[0]
+
+                            if curr_mode == 'TRAIN':
+                                self.train_size += \
+                                    sum(1 for line in \
+                                                open(os.path.join(self.skeleton_dir, 
+                                                                line, 'skeleton.txt')))
+                            elif curr_mode == 'TEST':
+                                self.test_size += \
+                                    sum(1 for line in \
+                                                open(os.path.join(self.skeleton_dir, 
+                                                                line, 'skeleton.txt')))
+
 
     def _check_exists(self):
         # Check basic data
-        for mid in range(self.subject_num):
-            for fd in self.folder_list:
-                annot_file = os.path.join(self.root, 'P'+str(mid), fd, 'joint.txt')
-                if not os.path.exists(annot_file):
-                    print('Error: annotation file {} does not exist'.format(annot_file))
-                    return False
+        # Subj_1, ..., Subj_6   <SUBJECT>
+        #   ->  charge_cell_phone, ..., write   <ACTION_LABEL>
+        #       -> 1, ..., 4    <INSTANCE_LABEL>
+        #           -> skeleton.txt     <GT_Y_PTS>
 
-        # Check precomputed centers by v2v-hand model's author
-        for subject_id in range(self.subject_num):
-            center_train = os.path.join(self.center_dir, 'center_train_' + str(subject_id) + '_refined.txt')
-            center_test = os.path.join(self.center_dir, 'center_test_' + str(subject_id) + '_refined.txt')
-            if not os.path.exists(center_train) or not os.path.exists(center_test):
-                print('Error: precomputed center files do not exist')
-                return False
+        for subj in self.subj_dirnames:
+            for action_lbl in os.listdir(os.path.join(self.skeleton_dir, subj)):
+                for inst_lbl in os.listdir(os.path.join(self.skeleton_dir, subj, action_lbl)):
+                    annot_file = os.path.join(self.skeleton_dir, subj, action_lbl, inst_lbl, 'skeleton.txt')    
+                    if not os.path.exists(annot_file):
+                        print('Error: annotation file {} does not exist'.format(annot_file))
+                        return False
+
+        # in future check pre-computed centers
 
         return True
+
+
+    def _compute_action_classes(self):
+        action_info_file = os.path.join(self.root, 
+                                         'action_object_info.txt')
+        self.action_class_dict = {}
+
+        with open(action_info_file) as f:
+            all_lines = f.read().splitlines()
+
+            # remove first line as its a header
+            all_lines = all_lines[1:]
+            for i, line in enumerate(all_lines):
+                self.action_class_dict[i] = line.split(' ')[1]
+               
+            self.action_classes = len(self.action_class_dict)
+
+#@profile
+def debug():
+    t = time.time()
+    tstDataset = HandPoseActionDataset('hand_pose_action', DatasetMode.TRAIN, TaskMode.HAR,
+                                        3, transform=None, reduce=False)
+    
+    print("Data Loaded! Took: %0.2fs" % (time.time() - t))
+
+    sample = tstDataset[0]
+
+#### for debugging
+if __name__ == "__main__":
+    debug()

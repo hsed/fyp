@@ -13,6 +13,11 @@ from dp_augment import *
 
 from sklearn.decomposition import PCA
 
+'''
+    === dp_util.py in deep-prior-pp-pytorch
+
+'''
+
 
 def standardiseImg(depth_img, com_dpt_mm, crop_dpt_mm, extrema=(-1,1), copy_arr=False):
     # create a copy to prevent issues to original array

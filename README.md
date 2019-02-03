@@ -21,15 +21,23 @@
 
 ### Dataset Loaded & Debugging
 
-- [ ] Basic Structure of dataset
-- [ ] Working debugging functions to plot etc.
-- [ ] Dataset class from pytorch
+- [x] Basic Structure of dataset
+- [ ] Working debugging functions to plot etc. a random sample
+- [ ] Given a sample (raw sample no transform):
+    - [ ] Plot depth, keypt, com in 2D if HPE
+    - [ ] Plot (first 5, last 5) depths, keypts, coms in 2D if HAR
+- [x] Dataset class from pytorch
+- [x] Dataset `__getitem__` function for either HPE/HAR
 - [ ] Working transformer functions and util functions
 - [ ] Working augmentation functions
+- [ ] Working plot of augmented/transformed data e.g. crop, rotate etc
 
 
 ### Baseline LSTM
 - [ ] Model design
+  - [ ] Look at pad data and pack data and other rnn helper functions
+  - [ ] Look at pytorch rnn tutorial, also lstm sample
+  - [ ] look at DLmaths rnn etc.
 - [ ] Train+Test
 
 ### Baseline HPE/HPG
@@ -50,3 +58,9 @@ Where possible this document aims to acknoledges sources used for this project.
 
 ### Main Structure
 Template from https://github.com/victoresque/pytorch-template. See `LICENSE-1` for details on the license.
+
+### Dataset + Hand Model Image + Most Details
+https://github.com/guiggh/hand_pose_action
+
+### Some Helper Utils and Transformers
+v2v-pytorch
