@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cmap
 
-from dp_augment import *
+from .dp_augment import *
 
 from sklearn.decomposition import PCA
 

@@ -1,6 +1,6 @@
 import torch
 
-
+# accuracy
 def my_metric(output, target):
     with torch.no_grad():
         pred = torch.argmax(output, dim=1)
@@ -9,6 +9,7 @@ def my_metric(output, target):
         correct += torch.sum(pred == target).item()
     return correct / len(target)
 
+# top-k accuracy
 def my_metric2(output, target, k=3):
     with torch.no_grad():
         pred = torch.topk(output, k, dim=1)[1]

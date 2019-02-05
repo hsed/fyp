@@ -18,5 +18,8 @@ Its needed because the 3D world co-ordinates are calibrated with the depth senso
 The intrinsic params are the usual:
 
 $$
-
+f = (f_x, f_y) : \text{Focal Length}
+$$
+$$
+p = (p_x, p_y) \equiv (u_0, v_0) : \text{Principal Point}
 $$

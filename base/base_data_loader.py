@@ -50,6 +50,9 @@ class BaseDataLoader(DataLoader):
         return train_sampler, valid_sampler
         
     def split_validation(self):
+        '''
+            USe this extract a ref to a data_loader that works only on val sampler
+        '''
         if self.valid_sampler is None:
             return None
         else:

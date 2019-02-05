@@ -3,17 +3,19 @@
     "n_gpu": 1,
     
     "arch": {
-        "type": "MnistModel",
+        "type": "BaselineHARModel",
         "args": {}
     },
     "data_loader": {
-        "type": "MnistDataLoader",
+        "type": "JointsActionDataLoader",
         "args":{
-            "data_dir": "data/",
-            "batch_size": 128,
-            "shuffle": true,
-            "validation_split": 0.1,
-            "num_workers": 2
+            "data_dir": "datasets/hand_pose_action",
+            "dataset_type": "train",
+            "batch_size": 4,
+            "shuffle": false,
+            "validation_split": 0.01,
+            "num_workers": 2,
+            "debug": false
         }
     },
     "optimizer": {
@@ -40,7 +42,10 @@
         "save_dir": "saved/",
         "save_period": 1,
         "verbosity": 2,
-        
+
+        "dtype": "float",
+        "target_dtype": "long",
+
         "monitor": "min val_loss",
         "early_stop": 10,
         

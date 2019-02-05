@@ -49,10 +49,24 @@ class Trainer(BaseTrainer):
         total_loss = 0
         total_metrics = np.zeros(len(self.metrics))
         for batch_idx, (data, target) in enumerate(self.data_loader):
-            data, target = data.to(self.device), target.to(self.device)
+            
+            # need to fix datatypes later!! TODO:
+            target = target.to(self.device, self.target_dtype)
 
             self.optimizer.zero_grad()
-            output = self.model(data)
+
+            if isinstance(data, torch.Tensor):
+                data = data.to(self.device, self.dtype)
+                output = self.model(data)
+            elif isinstance(data, tuple):
+                # if its not a tensor its probably a tuple
+                # we expect model to handle tuple
+                # we send it in similar fashion to *args
+                data = tuple(sub_data.to(self.device, self.dtype) for sub_data in data)
+                output = self.model(*data)
+            else:
+                raise RuntimeError("Invalid Datatype")
+            
             loss = self.loss(output, target)
             loss.backward()
             self.optimizer.step()
@@ -69,7 +83,9 @@ class Trainer(BaseTrainer):
                     self.data_loader.n_samples,
                     100.0 * batch_idx / len(self.data_loader),
                     loss.item()))
-                self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
+                #self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
+            
+            #break # return after one batch
 
         log = {
             'loss': total_loss / len(self.data_loader),
@@ -99,16 +115,29 @@ class Trainer(BaseTrainer):
         total_val_metrics = np.zeros(len(self.metrics))
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(self.valid_data_loader):
-                data, target = data.to(self.device), target.to(self.device)
+                target = target.to(self.device, self.target_dtype)
 
-                output = self.model(data)
+                self.optimizer.zero_grad()
+
+                if isinstance(data, torch.Tensor):
+                    data = data.to(self.device, self.dtype)
+                    output = self.model(data)
+                elif isinstance(data, tuple):
+                    # if its not a tensor its probably a tuple
+                    # we expect model to handle tuple
+                    # we send it in similar fashion to *args
+                    data = tuple(sub_data.to(self.device, self.dtype) for sub_data in data)
+                    output = self.model(*data)
+                else:
+                    raise RuntimeError("Invalid Datatype")
+
                 loss = self.loss(output, target)
 
                 self.writer.set_step((epoch - 1) * len(self.valid_data_loader) + batch_idx, 'valid')
                 self.writer.add_scalar('loss', loss.item())
                 total_val_loss += loss.item()
                 total_val_metrics += self._eval_metrics(output, target)
-                self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
+                #self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
 
         return {
             'val_loss': total_val_loss / len(self.valid_data_loader),

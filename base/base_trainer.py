@@ -14,11 +14,15 @@ class BaseTrainer:
     """
     def __init__(self, model, loss, metrics, optimizer, resume, config, train_logger=None):
         self.config = config
+        cfg_trainer = config['trainer']
+
         self.logger = logging.getLogger(self.__class__.__name__)
 
         # setup GPU device if available, move model into configured device
+        self.dtype = getattr(torch, cfg_trainer['dtype'])
+        self.target_dtype = getattr(torch, cfg_trainer['target_dtype'])
         self.device, device_ids = self._prepare_device(config['n_gpu'])
-        self.model = model.to(self.device)
+        self.model = model.to(self.device, self.dtype)
         if len(device_ids) > 1:
             self.model = torch.nn.DataParallel(model, device_ids=device_ids)
 
@@ -27,7 +31,7 @@ class BaseTrainer:
         self.optimizer = optimizer
         self.train_logger = train_logger
 
-        cfg_trainer = config['trainer']
+        
         self.epochs = cfg_trainer['epochs']
         self.save_period = cfg_trainer['save_period']
         self.verbosity = cfg_trainer['verbosity']

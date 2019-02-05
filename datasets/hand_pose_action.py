@@ -9,6 +9,12 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset
 
+from base import BaseDataType as DT
+
+# renaming to avoid error in this file
+from base import BaseDatasetType as DatasetMode
+from base import BaseTaskType as TaskMode
+
 #### TO HEAVILY EDIT TO SUPPORT HAND ACTION DATASET
 ## starting from 0, each component of y_gt_mm_keypoints is
 # --0(wrist)
@@ -46,30 +52,6 @@ from torch.utils.data import Dataset
 #         ## plot here to see how it looks like
 
 #         return depth_image
-
-
-class DatasetMode(IntEnum):
-    TRAIN = 0
-    TEST = 1
-
-class TaskMode(IntEnum):
-    '''
-        HPE:
-            -> Each raw sample is one frame consisting of:
-                1) Depth-map -- 2D Matrix (640 x 480)
-                2) Hand Skeleton -- 2D Matrix (21 x 3)
-                3) Action Class One-Hot Label (optional to use) -- 1D Matrix (45 x 1)
-
-        HAR:
-            -> Each raw sample is a set of F frames consisting of:
-                1) Depth-maps from f=1 to t=F -- 3D Matx (F x 640 x 480)
-                2) Hand Skeletons from f=1 to t=F -- 3D Matx (F x 21 x 3)
-                3) Action Class One-Hot Label (optional to use) -- 2D Matx (F x 45)
-                4) Total Frames == F
-            -> Unless later decided, F will VARY for each sample
-    '''
-    HAR = 0
-    HPE = 1
 
 
 
@@ -124,15 +106,20 @@ class HandPoseActionDataset(Dataset):
         #self.center_dir = center_dir # not in use
 
         # setup modes
-        self.data_mode = data_mode
-        self.task_mode = task_mode
+        if data_mode not in DatasetMode._value2member_map_:
+            raise RuntimeError("Invalid dataset type, choose from: ",
+                               DatasetMode._value2member_map_.keys())
+        if task_mode not in TaskMode._value2member_map_:
+            raise RuntimeError("Invalid task type, choose from: ",
+                               TaskMode._value2member_map_.keys())
+
+        self.data_mode = DatasetMode._value2member_map_[data_mode]
+        self.task_mode = TaskMode._value2member_map_[task_mode]
 
         self.test_subject_id = test_subject_id ## do testing using this ID's data
         self.transform = transform
         #self.use_refined_com = use_refined_com not in use
 
-        if not self.data_mode in list(DatasetMode): raise ValueError('Invalid mode')
-        if not self.task_mode in list(TaskMode): raise ValueError('Invalid mode')
         assert self.test_subject_id >= 0 and self.test_subject_id < len(self.subj_dirnames)
 
         # currently a very weak check, only checks for skeletons
@@ -156,19 +143,21 @@ class HandPoseActionDataset(Dataset):
                     img_path in self.names[index]]
             )
             sample = {
-                'names_seq': self.names[index], # sample names => R^{NUM_FRAMES x 1}
-                'joints_seq': self.joints_world[index], # 3d joints => R^{NUM_FRAMES x 63}
-                'coms_seq': self.coms_world[index], # => R^{NUM_FRAMES x 3}
-                'depthmaps_seq': depthmaps, # depthmaps => R^{NUM_FRAMES x 480 x 640}
+                DT.NAME_SEQ: self.names[index], # sample names => R^{NUM_FRAMES x 1}
+                DT.JOINTS_SEQ: self.joints_world[index], # 3d joints => R^{NUM_FRAMES x 63}
+                DT.COM_SEQ: self.coms_world[index], # => R^{NUM_FRAMES x 3}
+                DT.DEPTH_SEQ: depthmaps, # depthmaps => R^{NUM_FRAMES x 480 x 640}
+                DT.ACTION: self.actions[index], # action => R^{1}
             }
 
         elif self.task_mode == TaskMode.HPE:
             depthmap = cv2.imread(self.names[index], cv2.IMREAD_ANYDEPTH)
             sample = {
-                'name': self.names[index], # sample name => R^{1}
-                'joint': self.joints_world[index], # 3d joints of the sample => R^{63}
-                'com': self.coms_world[index], # => R^{3}
-                'depthmap': depthmap, # depthmap => R^{480 x 640}
+                DT.NAME: self.names[index], # sample name => R^{1}
+                DT.JOINTS: self.joints_world[index], # 3d joints of the sample => R^{63}
+                DT.COM: self.coms_world[index], # => R^{3}
+                DT.DEPTH: depthmap, # depthmap => R^{480 x 640}
+                DT.ACTION: self.actions[index] # action => R^{1}
             }
 
 
@@ -377,16 +366,3 @@ class HandPoseActionDataset(Dataset):
                
             self.action_classes = len(self.action_class_dict)
 
-#@profile
-def debug():
-    t = time.time()
-    tstDataset = HandPoseActionDataset('hand_pose_action', DatasetMode.TRAIN, TaskMode.HAR,
-                                        3, transform=None, reduce=False)
-    
-    print("Data Loaded! Took: %0.2fs" % (time.time() - t))
-
-    sample = tstDataset[0]
-
-#### for debugging
-if __name__ == "__main__":
-    debug()
