@@ -1,7 +1,6 @@
 # dataset 
-datasets
-~datasets/hand_pose_action.py
-~datasets/_msra_hand.py
+datasets/hand_pose_action
+
 
 # checkpoint files
 checkpoint/*
