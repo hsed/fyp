@@ -2,10 +2,11 @@ import os
 import argparse
 import torch
 from tqdm import tqdm
-import data_loader.data_loaders as module_data
-import model.loss as module_loss
-import model.metric as module_metric
-import model.model as module_arch
+
+import models as module_arch
+from data_utils import data_loaders as module_data
+from metrics import loss as module_loss
+from  metrics import metric as module_metric
 from train import get_instance
 
 
@@ -13,10 +14,10 @@ def main(config, resume):
     # setup data_loader instances
     data_loader = getattr(module_data, config['data_loader']['type'])(
         config['data_loader']['args']['data_dir'],
-        batch_size=512,
+        batch_size=4,
         shuffle=False,
         validation_split=0.0,
-        training=False,
+        dataset_type='test',
         num_workers=2
     )
 
@@ -37,7 +38,9 @@ def main(config, resume):
 
     # prepare model for testing
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = model.to(device)
+    dtype = getattr(torch, config['dtype'])
+    target_dtype = getattr(torch, config['target_dtype'])
+    model = model.to(device, dtype)
     model.eval()
 
     total_loss = 0.0
@@ -45,15 +48,26 @@ def main(config, resume):
 
     with torch.no_grad():
         for i, (data, target) in enumerate(tqdm(data_loader)):
-            data, target = data.to(device), target.to(device)
-            output = model(data)
+
+            target = target.to(device, target_dtype)
+            if isinstance(data, torch.Tensor):
+                data = data.to(device, dtype)
+                output = model(data)
+            elif isinstance(data, tuple):
+                # if its not a tensor its probably a tuple
+                # we expect model to handle tuple
+                # we send it in similar fashion to *args
+                data = tuple(sub_data.to(device, dtype) for sub_data in data)
+                output = model(*data)
+            else:
+                raise RuntimeError("Invalid Datatype")
             #
             # save sample images, or do something with output here
             #
             
             # computing loss, metrics on test set
             loss = loss_fn(output, target)
-            batch_size = data.shape[0]
+            batch_size = data_loader.batch_size
             total_loss += loss.item() * batch_size
             for i, metric in enumerate(metric_fns):
                 total_metrics[i] += metric(output, target) * batch_size

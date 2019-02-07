@@ -9,7 +9,7 @@ import cv2
 import torch
 import numpy as np
 
-from .dp_augment import *
+from .data_augmentors import *
 from base import BaseDataType as DT
 
 from sklearn.decomposition import PCA

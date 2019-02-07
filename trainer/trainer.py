@@ -3,6 +3,7 @@ import torch
 from torchvision.utils import make_grid
 from base import BaseTrainer
 
+from tqdm import tqdm
 
 class Trainer(BaseTrainer):
     """
@@ -48,44 +49,52 @@ class Trainer(BaseTrainer):
     
         total_loss = 0
         total_metrics = np.zeros(len(self.metrics))
-        for batch_idx, (data, target) in enumerate(self.data_loader):
-            
-            # need to fix datatypes later!! TODO:
-            target = target.to(self.device, self.target_dtype)
+        #tqdm_dataloader = tqdm(self.data_loader)
+        with tqdm(total=len(self.data_loader)) as tqdm_pbar:
+            for batch_idx, (data, target) in enumerate(self.data_loader):
+                
+                self.optimizer.zero_grad()
 
-            self.optimizer.zero_grad()
+                target = target.to(self.device, self.target_dtype)
+                if isinstance(data, torch.Tensor):
+                    data = data.to(self.device, self.dtype)
+                    output = self.model(data)
+                elif isinstance(data, tuple):
+                    # if its not a tensor its probably a tuple
+                    # we expect model to handle tuple
+                    # we send it in similar fashion to *args
+                    data = tuple(sub_data.to(self.device, self.dtype) for sub_data in data)
+                    output = self.model(*data)
+                else:
+                    raise RuntimeError("Invalid Datatype")
+                
+                loss = self.loss(output, target)
+                loss.backward()
+                self.optimizer.step()
 
-            if isinstance(data, torch.Tensor):
-                data = data.to(self.device, self.dtype)
-                output = self.model(data)
-            elif isinstance(data, tuple):
-                # if its not a tensor its probably a tuple
-                # we expect model to handle tuple
-                # we send it in similar fashion to *args
-                data = tuple(sub_data.to(self.device, self.dtype) for sub_data in data)
-                output = self.model(*data)
-            else:
-                raise RuntimeError("Invalid Datatype")
-            
-            loss = self.loss(output, target)
-            loss.backward()
-            self.optimizer.step()
+                self.writer.set_step((epoch - 1) * len(self.data_loader) + batch_idx)
+                self.writer.add_scalar('loss', loss.item())
+                total_loss += loss.item()
+                total_metrics += self._eval_metrics(output, target)
 
-            self.writer.set_step((epoch - 1) * len(self.data_loader) + batch_idx)
-            self.writer.add_scalar('loss', loss.item())
-            total_loss += loss.item()
-            total_metrics += self._eval_metrics(output, target)
-
-            if self.verbosity >= 2 and batch_idx % self.log_step == 0:
-                self.logger.info('Train Epoch: {} [{}/{} ({:.0f}%)] Loss: {:.6f}'.format(
-                    epoch,
-                    batch_idx * self.data_loader.batch_size,
-                    self.data_loader.n_samples,
-                    100.0 * batch_idx / len(self.data_loader),
-                    loss.item()))
-                #self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
-            
-            #break # return after one batch
+                if self.verbosity >= 2 and batch_idx % self.log_step == 0:
+                    # self.logger.info('Train Epoch: {} [{}/{} ({:.0f}%)] Loss: {:.6f}'.format(
+                    #     epoch,
+                    #     batch_idx * self.data_loader.batch_size,
+                    #     self.data_loader.n_samples,
+                    #     100.0 * batch_idx / len(self.data_loader),
+                    #     loss.item()))
+                    #({:.0f}%)
+                    tqdm_pbar.update(self.log_step)
+                    tqdm_pbar.set_description('Train Epoch: {} [{}/{}] Loss: {:.6f}'.format(
+                        epoch,
+                        batch_idx * self.data_loader.batch_size,
+                        self.data_loader.n_samples,
+                        #100.0 * batch_idx / len(self.data_loader),
+                        loss.item()))
+                    #self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
+                
+                #break # return after one batch
 
         log = {
             'loss': total_loss / len(self.data_loader),

@@ -1,6 +1,8 @@
 {
     "name": "Mnist_LeNet",
     "n_gpu": 1,
+    "dtype": "float",
+    "target_dtype": "long",
     
     "arch": {
         "type": "BaselineHARModel",
@@ -42,9 +44,6 @@
         "save_dir": "saved/",
         "save_period": 1,
         "verbosity": 2,
-
-        "dtype": "float",
-        "target_dtype": "long",
 
         "monitor": "min val_loss",
         "early_stop": 10,
