@@ -1,7 +1,7 @@
 from torchvision import datasets, transforms
 #from torch.utils.data.dataloader import default_collate
 
-from base import BaseDataLoader, BaseDataType
+from data_utils import BaseDataLoader, BaseDataType
 
 from datasets import HandPoseActionDataset
 

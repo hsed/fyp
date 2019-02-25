@@ -4,7 +4,7 @@ from torchvision import transforms
 
 from datasets.hand_pose_action import HandPoseActionDataset, DatasetMode, TaskMode
 
-from data_utils import JointsActionDataLoader
+from data_utils import JointsActionDataLoader, CollateJointsSeqBatch
 
 from models import BaselineHARModel
 
@@ -16,6 +16,9 @@ import numpy as np
 
 #@profile
 def debug():
+    ### fix for linux filesystem
+    torch.multiprocessing.set_sharing_strategy('file_system')
+
     ### note this stuff is meant to be wrapped by data loader class!!
     train_loader = JointsActionDataLoader(
                                             data_dir='datasets/hand_pose_action',
@@ -23,7 +26,7 @@ def debug():
                                             batch_size=4,
                                             shuffle=False,
                                             validation_split=0.0,
-                                            num_workers=1,
+                                            num_workers=0,
                                             debug=False
                                          )
     
@@ -40,8 +43,9 @@ def debug():
     #     print("VALUE:\n", data.shape)
     #     quit()
     
-    print("Model Summary: ")
+    print("\nModel Summary: ")
     lstm_baseline.summary()
+    print("\n")
 
     sample_input_seq = [
         (np.random.randn(i, 63), j) for i,j in zip([3, 5, 10, 12, 7], [0,1,2,3,4])
@@ -109,7 +113,15 @@ def debug():
     #loss = criterion(outputs,targets)
     #loss.backward()
     #optimizer.step()
-
+    from tqdm import tqdm
+    with tqdm(total=len(train_loader)) as tqdm_pbar:
+        t = time.time()
+        for i, item in enumerate(train_loader):
+            #print("Got ", i)
+            tqdm_pbar.update(1)
+            if i > 9:
+                break
+        print("Data Loading Took: %0.2fs" % (time.time() - t) )
     losses = []
     
     print("Overfitting on 1 batch for 10 epochs...")

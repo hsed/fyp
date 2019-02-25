@@ -34,11 +34,11 @@
 
 
 ### Baseline LSTM
-- [ ] Model design
-  - [ ] Look at pad data and pack data and other rnn helper functions
-  - [ ] Look at pytorch rnn tutorial, also lstm sample
+- [x] Model design
+  - [x] Look at pad data and pack data and other rnn helper functions
+  - [x] Look at pytorch rnn tutorial, also lstm sample
   - [ ] look at DLmaths rnn etc.
-- [ ] Train+Test
+- [x] Train+Test
 
 ### Baseline HPE/HPG
 - [ ] Baseline Experiments
@@ -52,8 +52,6 @@
 
 
 ## Acknoledgements
-
-
 Where possible this document aims to acknoledges sources used for this project.
 
 ### Main Structure
@@ -64,3 +62,14 @@ https://github.com/guiggh/hand_pose_action
 
 ### Some Helper Utils and Transformers
 v2v-pytorch
+
+
+---
+
+## Experiments
+### Experiment #1: Train DeepPrior HPE on FirstPersonHandAction dataset
+
+### Experiment #1: Train DeepPrior HPE on FirstPersonHandAction dataset
+
+#### Setup
+

@@ -138,15 +138,15 @@ class HandPoseActionDataset(Dataset):
 
         if self.task_mode == TaskMode.HAR:
             # stack sequences of 1-channel depth imgs
-            depthmaps = np.stack(
-                [cv2.imread(img_path, cv2.IMREAD_ANYDEPTH) for \
-                    img_path in self.names[index]]
-            )
+            # depthmaps = np.stack(
+            #     [cv2.imread(img_path, cv2.IMREAD_ANYDEPTH) for \
+            #         img_path in self.names[index]]
+            # )
             sample = {
                 DT.NAME_SEQ: self.names[index], # sample names => R^{NUM_FRAMES x 1}
                 DT.JOINTS_SEQ: self.joints_world[index], # 3d joints => R^{NUM_FRAMES x 63}
                 DT.COM_SEQ: self.coms_world[index], # => R^{NUM_FRAMES x 3}
-                DT.DEPTH_SEQ: depthmaps, # depthmaps => R^{NUM_FRAMES x 480 x 640}
+                DT.DEPTH_SEQ: None, #depthmaps, # depthmaps => R^{NUM_FRAMES x 480 x 640}
                 DT.ACTION: self.actions[index], # action => R^{1}
             }
 

@@ -5,9 +5,7 @@ import torch.nn.init as I
 from torch import tensor as T
 from collections import OrderedDict
 
-from base import BaseModel
-
-from models import LinearBlock
+from models import BaseModel, LinearBlock
 
 from torch.nn.utils.rnn import pack_sequence
 

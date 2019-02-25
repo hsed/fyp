@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from torchvision.utils import make_grid
-from base import BaseTrainer
+from trainer import BaseTrainer
 
 from tqdm import tqdm
 
@@ -20,13 +20,12 @@ class Trainer(BaseTrainer):
         self.valid_data_loader = valid_data_loader
         self.do_validation = self.valid_data_loader is not None
         self.lr_scheduler = lr_scheduler
-        self.log_step = int(np.sqrt(data_loader.batch_size))
+        self.log_step = 1#int(np.sqrt(data_loader.batch_size))
 
     def _eval_metrics(self, output, target):
         acc_metrics = np.zeros(len(self.metrics))
         for i, metric in enumerate(self.metrics):
             acc_metrics[i] += metric(output, target)
-            self.writer.add_scalar(f'{metric.__name__}', acc_metrics[i])
         return acc_metrics
 
     def _train_epoch(self, epoch):
@@ -46,6 +45,7 @@ class Trainer(BaseTrainer):
             The metrics in log must have the key 'metrics'.
         """
         self.model.train()
+        print("\n") # clearer
     
         total_loss = 0
         total_metrics = np.zeros(len(self.metrics))
@@ -72,8 +72,10 @@ class Trainer(BaseTrainer):
                 loss.backward()
                 self.optimizer.step()
 
-                self.writer.set_step((epoch - 1) * len(self.data_loader) + batch_idx)
-                self.writer.add_scalar('loss', loss.item())
+                ## do this every epoch not every batch
+                #self.writer.set_step((epoch - 1) * len(self.data_loader) + batch_idx)
+                #self.writer.add_scalar('loss', loss.item())
+                
                 total_loss += loss.item()
                 total_metrics += self._eval_metrics(output, target)
 
@@ -95,11 +97,20 @@ class Trainer(BaseTrainer):
                     #self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
                 
                 #break # return after one batch
+        
 
         log = {
             'loss': total_loss / len(self.data_loader),
             'metrics': (total_metrics / len(self.data_loader)).tolist()
         }
+
+        ## per epoch logging 
+        self.writer.set_step(epoch)
+        self.writer.add_scalar('loss', log['loss'])
+
+        for metric, metric_val in zip(self.metrics, log['metrics']):
+            self.writer.add_scalar(f'{metric.__name__}', metric_val)
+        
 
         if self.do_validation:
             val_log = self._valid_epoch(epoch)
@@ -142,13 +153,21 @@ class Trainer(BaseTrainer):
 
                 loss = self.loss(output, target)
 
-                self.writer.set_step((epoch - 1) * len(self.valid_data_loader) + batch_idx, 'valid')
-                self.writer.add_scalar('loss', loss.item())
+                #self.writer.set_step((epoch - 1) * len(self.valid_data_loader) + batch_idx, 'valid')
+                #self.writer.add_scalar('loss', loss.item())
                 total_val_loss += loss.item()
                 total_val_metrics += self._eval_metrics(output, target)
                 #self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
 
-        return {
+        log = {
             'val_loss': total_val_loss / len(self.valid_data_loader),
             'val_metrics': (total_val_metrics / len(self.valid_data_loader)).tolist()
         }
+        
+        self.writer.set_step(epoch, 'valid')
+        self.writer.add_scalar('loss', log['val_loss'])
+
+        for metric, metric_val in zip(self.metrics, log['val_metrics']):
+            self.writer.add_scalar(f'{metric.__name__}', metric_val)
+
+        return log

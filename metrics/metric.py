@@ -1,7 +1,7 @@
 import torch
 
 # accuracy
-def my_metric(output, target):
+def top1_acc(output, target):
     with torch.no_grad():
         pred = torch.argmax(output, dim=1)
         assert pred.shape[0] == len(target)
@@ -10,7 +10,7 @@ def my_metric(output, target):
     return correct / len(target)
 
 # top-k accuracy
-def my_metric2(output, target, k=3):
+def top3_acc(output, target, k=3):
     with torch.no_grad():
         pred = torch.topk(output, k, dim=1)[1]
         assert pred.shape[0] == len(target)

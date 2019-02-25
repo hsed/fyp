@@ -2,6 +2,7 @@ import os
 import json
 import argparse
 import torch
+import numpy as np
 import data_utils.data_loaders as module_data
 import metrics.loss as module_loss
 import metrics.metric as module_metric
@@ -14,17 +15,37 @@ def get_instance(module, name, config, *args):
     return getattr(module, config[name]['type'])(*args, **config[name]['args'])
 
 def main(config, resume):
+    np.random.seed(1)
+    torch.manual_seed(1)
+    torch.cuda.manual_seed(1)
+    
     train_logger = Logger()
 
     # setup data_loader instances
+    print("=> Loading data...")
     data_loader = get_instance(module_data, 'data_loader', config)
     valid_data_loader = data_loader.split_validation()
 
+    ### new, if val_split < 0.0 then use test_set for validation so
+    ### that we can still do early stopping
+    if config['data_loader']['args']['validation_split'] < 0.0:
+        print("Info: using test set for validation as val_split was < 0")
+        valid_data_loader = getattr(module_data, config['data_loader']['type'])(
+                                    config['data_loader']['args']['data_dir'],
+                                    batch_size=4,
+                                    shuffle=False,
+                                    validation_split=0.0,
+                                    dataset_type='test',
+                                    num_workers=config['data_loader']['args']['num_workers']
+        )
+
     # build model architecture
+    print("\n=> Building model...")
     model = get_instance(module_arch, 'arch', config)
     print(model)
     
     # get function handles of loss and metrics
+    print("\n=> Building loss and optimizer modules...")
     loss = getattr(module_loss, config['loss'])
     metrics = [getattr(module_metric, met) for met in config['metrics']]
     
@@ -42,6 +63,7 @@ def main(config, resume):
                       lr_scheduler=lr_scheduler,
                       train_logger=train_logger)
 
+    print("\nTraining...")
     trainer.train()
 
 if __name__ == '__main__':
