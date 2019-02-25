@@ -83,6 +83,8 @@ class BaseTrainer:
         """
         Full training logic
         """
+        not_improved_count = 0
+
         for epoch in range(self.start_epoch, self.epochs + 1):
             result = self._train_epoch(epoch)
             
@@ -100,8 +102,8 @@ class BaseTrainer:
             if self.train_logger is not None:
                 self.train_logger.add_entry(log)
                 if self.verbosity >= 1:
-                    for key, value in log.items():
-                        self.logger.info('    {:15s}: {}'.format(str(key), value))
+                    log_str = ''.join(['{:5s}: {:.2f}; '.format(str(key), value) for key,value in  log.items()])
+                    self.logger.info(log_str)
 
             # evaluate model performance according to configured metric, save best checkpoint as model_best
             best = False
