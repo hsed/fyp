@@ -1,12 +1,14 @@
 {
-    "name": "Mnist_LeNet",
+    "name": "BaselineLSTM",
     "n_gpu": 1,
     "dtype": "float",
     "target_dtype": "long",
     
     "arch": {
         "type": "BaselineHARModel",
-        "args": {}
+        "args": {
+            "num_hidden_layers": 1
+        }
     },
     "data_loader": {
         "type": "JointsActionDataLoader",
@@ -14,9 +16,9 @@
             "data_dir": "datasets/hand_pose_action",
             "dataset_type": "train",
             "batch_size": 4,
-            "shuffle": false,
-            "validation_split": 0.01,
-            "num_workers": 2,
+            "shuffle": true,
+            "validation_split": 0.2,
+            "num_workers": 4,
             "debug": false
         }
     },
@@ -30,7 +32,7 @@
     },
     "loss": "nll_loss",
     "metrics": [
-        "my_metric", "my_metric2"
+        "top1_acc", "top3_acc"
     ],
     "lr_scheduler": {
         "type": "StepLR",
@@ -42,7 +44,7 @@
     "trainer": {
         "epochs": 100,
         "save_dir": "saved/",
-        "save_period": 1,
+        "save_period": 5,
         "verbosity": 2,
 
         "monitor": "min val_loss",
