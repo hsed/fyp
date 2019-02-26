@@ -41,6 +41,18 @@
 - [x] Train+Test
 
 ### Baseline HPE/HPG
+- [ ] Better and faster image loading..
+  - [x] Convert all openCV loading to PIL loading as its much faster (predicts ~20mins vs ~30mins)
+  - [ ] Create new h5py saving procedure based on model type (hpe,har) and dataset type (train,test)
+  - [ ] find clever way to automatically laod the correct dataset, for validation no need to worry as pytorch dataloader majically handles it, it only uses a sampler etc. underlying dataset obj is only one
+  - [ ] save h5py files and load appropriately, test on init if file exits if not do the loading...
+  - [ ] test reading from h5py files and see perf difference vs no file real
+  - [ ] code (can also write instead on every file read but maybe slower...):
+  ```py
+    with open('data.h5py', 'wa') as f:
+        for i,item in self.depthmaps:
+            f.create_dataset('%d' % i , item)
+  ```
 - [ ] Baseline Experiments
   - [ ] VAE vs AE
     - [ ] Import Models from spurra/vae-hands-3d
@@ -73,3 +85,8 @@ v2v-pytorch
 
 #### Setup
 
+
+
+```
+tmux attach -t 0
+```
