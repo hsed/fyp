@@ -5,15 +5,17 @@ import time
 
 from enum import IntEnum
 
-import cv2
+from PIL import Image
+
+#import cv2 # no longer using this
 import numpy as np
 from torch.utils.data import Dataset
 
-from base import BaseDataType as DT
+from data_utils import BaseDataType as DT
 
 # renaming to avoid error in this file
-from base import BaseDatasetType as DatasetMode
-from base import BaseTaskType as TaskMode
+from data_utils import BaseDatasetType as DatasetMode
+from data_utils import BaseTaskType as TaskMode
 
 #### TO HEAVILY EDIT TO SUPPORT HAND ACTION DATASET
 ## starting from 0, each component of y_gt_mm_keypoints is
@@ -128,6 +130,7 @@ class HandPoseActionDataset(Dataset):
         ### load all the y_values and corresponding corrected CoM values using
         ### 'train.txt' and 'center_train_refined'
         self._load()
+        self._load_depthmaps()
     
     def __getitem__(self, index):
         ## the x-values are loaded 'on-the-fly' as and when required.
@@ -137,7 +140,7 @@ class HandPoseActionDataset(Dataset):
         # any depth to allow 16-it images as the depths are 16-bit here
 
         if self.task_mode == TaskMode.HAR:
-            # stack sequences of 1-channel depth imgs
+            # # stack sequences of 1-channel depth imgs
             # depthmaps = np.stack(
             #     [cv2.imread(img_path, cv2.IMREAD_ANYDEPTH) for \
             #         img_path in self.names[index]]
@@ -151,7 +154,7 @@ class HandPoseActionDataset(Dataset):
             }
 
         elif self.task_mode == TaskMode.HPE:
-            depthmap = cv2.imread(self.names[index], cv2.IMREAD_ANYDEPTH)
+            #depthmap = cv2.imread(self.names[index], cv2.IMREAD_ANYDEPTH)
             sample = {
                 DT.NAME: self.names[index], # sample name => R^{1}
                 DT.JOINTS: self.joints_world[index], # 3d joints of the sample => R^{63}
@@ -275,6 +278,28 @@ class HandPoseActionDataset(Dataset):
         assert(len(self.joints_world) == self.num_samples)
         assert(len(self.coms_world) == self.num_samples)
         assert(len(self.actions) == self.num_samples)
+
+    def _load_depthmaps(self):
+        from tqdm import tqdm
+
+
+
+        self.depthmaps = []
+        for item in tqdm(self.names):
+            if self.task_mode == TaskMode.HAR:
+            # # stack sequences of 1-channel depth imgs
+                self.depthmaps.append(
+                    np.stack(
+                        [np.asarray(Image.open(img_path)) for
+                        img_path in item]
+                    )
+                )             
+
+            elif self.task_mode == TaskMode.HPE:
+                self.depthmaps.append(
+                    #cv2.imread(item, cv2.IMREAD_ANYDEPTH)
+                    np.asarray(Image.open(item))
+                )
 
 
     def _compute_dataset_size(self):
