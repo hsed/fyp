@@ -5,6 +5,52 @@
 
 
 ## Structure
+### Folder Structure
+  ```
+  root/
+  │
+  ├── train.py - main script to start training
+  ├── test.py - evaluation of trained model
+  │
+  ├── data_utils/ - anything about data loading goes here
+  |   ├── base_data_loader.py - abstract base class for data loaders
+  │   └── data_loaders.py
+  │
+  ├── datasets/ - default directory for storing input data
+  │
+  ├── experients/ - abstract base classes
+  │   ├── config.json - config file
+  |   ├── config_*.json
+  │   └── config_*.json - other experiments
+  │   
+  ├── ext/ - external files
+  |
+  ├── models/ - models, losses, and metrics
+  |   ├── base_model.py - abstract base class for models
+  │   ├── blocks.py
+  │   ├── **
+  │   └── model.py
+  |
+  ├── metrics/ - losses, and metrics
+  │   ├── loss.py
+  │   ├── metric.py
+  │   └── model.py
+  │
+  ├── saved/ - default checkpoints folder
+  │   └── runs/ - default logdir for tensorboardX
+  │
+  ├── trainer/ - trainers
+  |   ├── base_trainer.py - abstract base class for trainers
+  │   └── trainer.py
+  │
+  └── utils/
+      ├── util.py
+      ├── logger.py - class for train logging
+      ├── visualization.py - class for tensorboardX visualization support
+      └── ...
+  ```
+
+### Notes
 - `datasets`: includes raw dataset files plus helper functions to load and/or debug and/or display raw information from dataset. Should include at-least one class of pytorch datasets derived type with `__getitem__` function
 - `data_utils`: includes all functions that manipulate data in any way after being loaded in raw forma and before being input to any model. Also includes functions to collect results during testing i.e. perform inverse transformations or other manipulation to transform outputs from models back to the same scope as the raw data. These can be used to store evaluation results in the same format as gt labels.
 - `utils`: all other extra helper functions needed during the training and/or testing can include:
