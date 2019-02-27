@@ -1,0 +1,3 @@
+[submodule "doc\\fyp-docs"]
+	path = doc\\fyp-docs
+	url = https://github.com/hsed/fyp-docs
