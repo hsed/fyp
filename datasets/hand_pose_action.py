@@ -2,18 +2,16 @@ import os
 import sys
 import struct
 import time
-
 from enum import IntEnum
 
-from PIL import Image
-
 #import cv2 # no longer using this
+import h5py
 import numpy as np
+from PIL import Image
+from tqdm import tqdm
 from torch.utils.data import Dataset
 
 from data_utils import BaseDataType as DT
-
-# renaming to avoid error in this file
 from data_utils import BaseDatasetType as DatasetMode
 from data_utils import BaseTaskType as TaskMode
 
@@ -57,12 +55,25 @@ from data_utils import BaseTaskType as TaskMode
 
 
 
+class Num2Str(object):
+    '''
+        For consistent keynames for use with h5 files
+    '''
+    def __init__(self, pad=8):
+        self.pad_str = "%" + "0" + str(pad) + "d"
+    
+    def __call__(self, i):
+        return (self.pad_str % i)
+
+
 class HandPoseActionDataset(Dataset):
-    def __init__(self, root, data_mode, task_mode,  test_subject_id, transform=None, reduce=False):
+    def __init__(self, root, data_mode, task_mode, transform=None, reduce=False):
         '''
             `reduce` => Train only on 1 gesture and 2 subjects, CoM won't work correctly
             `use_refined_com` => True: Use GT MCP (ID=5) ref; False: Use refined CoM pretrained.
                                 Currently disabled
+            `preload_depth` => Directly load all depth maps from cache file to RAM for faster training
+                               requires sufficient RAM
             
             Currently this class is used to load data to train a HAR
             Another class
@@ -95,7 +106,6 @@ class HandPoseActionDataset(Dataset):
         
         self.test_pos = -1
         
-        self.subject_num = 3 if reduce else 6 ## number of subjects
 
         
         ### setup directories
@@ -106,6 +116,7 @@ class HandPoseActionDataset(Dataset):
         self.subj_dirnames = ['Subject_1'] if reduce else \
             ['Subject_%d' % i for i in range(1, 7)]
         #self.center_dir = center_dir # not in use
+        self.reduce = reduce
 
         # setup modes
         if data_mode not in DatasetMode._value2member_map_:
@@ -118,19 +129,25 @@ class HandPoseActionDataset(Dataset):
         self.data_mode = DatasetMode._value2member_map_[data_mode]
         self.task_mode = TaskMode._value2member_map_[task_mode]
 
-        self.test_subject_id = test_subject_id ## do testing using this ID's data
         self.transform = transform
         #self.use_refined_com = use_refined_com not in use
 
-        assert self.test_subject_id >= 0 and self.test_subject_id < len(self.subj_dirnames)
-
         # currently a very weak check, only checks for skeletons
         if not self._check_exists(): raise RuntimeError('Invalid Hand Pose Action Dataset')
+
+        # 1 => '00000001'; For cache naming
+        self.num2str = Num2Str(pad=8)
+
         
         ### load all the y_values and corresponding corrected CoM values using
         ### 'train.txt' and 'center_train_refined'
         self._load()
-        self._load_depthmaps()
+        self._load_depthmaps(data_mode, task_mode)
+
+        ## open depth_map cache in multi-read mode for dataloaders
+        ## bugs with this... 
+        ## see https://discuss.pytorch.org/t/dataloader-when-num-worker-0-there-is-bug/25643/16
+        self.depthmap_cachefile = None
     
     def __getitem__(self, index):
         ## the x-values are loaded 'on-the-fly' as and when required.
@@ -139,17 +156,21 @@ class HandPoseActionDataset(Dataset):
         #depthmap = load_depthmap(self.names[index], self.img_width, self.img_height, self.max_depth)
         # any depth to allow 16-it images as the depths are 16-bit here
 
+        ## need to do this here cause of bug
+        if self.depthmap_cachefile is None:
+            self.depthmap_cachefile = h5py.File(self.depthmap_cachepath, 'r', libver='latest', swmr=True)
+
         if self.task_mode == TaskMode.HAR:
-            # # stack sequences of 1-channel depth imgs
+            # commented code is depriciated, only kept for ref; ~10min (old) vs ~1s new!
             # depthmaps = np.stack(
-            #     [cv2.imread(img_path, cv2.IMREAD_ANYDEPTH) for \
+            #     [np.asarray(Image.open(img_path), dtype=np.uint16) for \
             #         img_path in self.names[index]]
             # )
             sample = {
                 DT.NAME_SEQ: self.names[index], # sample names => R^{NUM_FRAMES x 1}
                 DT.JOINTS_SEQ: self.joints_world[index], # 3d joints => R^{NUM_FRAMES x 63}
                 DT.COM_SEQ: self.coms_world[index], # => R^{NUM_FRAMES x 3}
-                DT.DEPTH_SEQ: None, #depthmaps, # depthmaps => R^{NUM_FRAMES x 480 x 640}
+                DT.DEPTH_SEQ: self.depthmap_cachefile[self.num2str(index)].value, #.value, #depthmaps, # depthmaps => R^{NUM_FRAMES x 480 x 640}
                 DT.ACTION: self.actions[index], # action => R^{1}
             }
 
@@ -159,11 +180,11 @@ class HandPoseActionDataset(Dataset):
                 DT.NAME: self.names[index], # sample name => R^{1}
                 DT.JOINTS: self.joints_world[index], # 3d joints of the sample => R^{63}
                 DT.COM: self.coms_world[index], # => R^{3}
-                DT.DEPTH: depthmap, # depthmap => R^{480 x 640}
+                DT.DEPTH: self.depthmap_cachefile[self.num2str(0)][index],# once indexed, its a numpy array # depthmap => R^{480 x 640}#self.depthmap_cachefile[self.num2str(index)].value
                 DT.ACTION: self.actions[index] # action => R^{1}
             }
 
-
+        #print("SHAPE::: ", sample[DT.DEPTH_SEQ].shape, "DTYPE::: ", sample[DT.DEPTH_SEQ].dtype)
 
         ## a lot happens here.
         if self.transform: sample = self.transform(sample)
@@ -200,6 +221,11 @@ class HandPoseActionDataset(Dataset):
         
         with open(action_split_file) as f:
             all_lines = f.read().splitlines()
+            
+            # reduce dataset for testing only
+            if self.reduce:
+                all_lines = [line for line in all_lines \
+                    if (('Training' in line) or ('Test' in line) or ('Subject_1' in line))]
             
             if (self.data_mode == DatasetMode.TRAIN):
                 # get only train samples
@@ -273,33 +299,97 @@ class HandPoseActionDataset(Dataset):
                 self.actions += \
                     [int(action_idx_str) for _ in range(len(new_joints_lst))]
         
-
         assert(len(self.names) == self.num_samples)
         assert(len(self.joints_world) == self.num_samples)
         assert(len(self.coms_world) == self.num_samples)
         assert(len(self.actions) == self.num_samples)
 
-    def _load_depthmaps(self):
-        from tqdm import tqdm
+    def _load_depthmaps(self, data_mode_str, task_mode_str):
+        '''
+            In this function, the depthmaps are first searched via h5py cache file, 
+            if found then nothing else is done as data will be loaded on the fly
+            if not found then all required depthmaps are loaded and consequently
+            stored into a h5py dataset file as a cache in the system, there is no
+            option to disable cache as its required to improve data loading during
+            training as otherwise there is a huge difference when loading depth maps
 
+            filepath:
+            datasets/hand_pose_action/data_{test|train}_{har|hpe}_cache.h5; libver=latest; swmr=True
+        '''
+        filepath = 'datasets/hand_pose_action/data_%s_%s_%scache.h5' % \
+                   (data_mode_str, task_mode_str, "" if not self.reduce else "reduced_")
+        filepath = os.path.normpath(filepath)
 
+        
+        if os.path.isfile(filepath):
+            ## basic assertion
+            with h5py.File(filepath, "r", libver='latest') as f:
+                all_ok = (
+                    len(f.keys()) == len(self.names) \
+                        if self.task_mode == TaskMode.HAR
+                        else f[self.num2str(0)].shape[0] == len(self.names)
+                )
+                if not all_ok:
+                    from warnings import warn
+                    warn("Inconsistent cache file: %s\nRebuilding cache..." % filepath)
+                else:
+                    self.depthmap_cachepath = filepath
+                    return
 
-        self.depthmaps = []
-        for item in tqdm(self.names):
+            # if all ok simply dont do anything
+
+        if not os.path.isdir(os.path.split(filepath)[0]):
+            os.mkdir(os.path.split(filepath)[0])
+        
+        print("Building cache file: %s..." % filepath)
+        
+        # note np.asarray doesnt perform any copying so file is still kept
+        # opened, for the HAR mode this is fine cause for each sequence we create a dataset and
+        # thus file is copied and written to disk, atmost num_frames files are opened at once
+        # for HPE mode we have to be careful here, we have to use np.array instead to create a copy
+        # because we are also stacking here
+
+        with h5py.File(filepath, 'w', libver='latest') as f:
+            self.depthmaps = []
+            ## note item is either a string or list type of paths
+            ## depending on dataset mode
             if self.task_mode == TaskMode.HAR:
-            # # stack sequences of 1-channel depth imgs
-                self.depthmaps.append(
-                    np.stack(
-                        [np.asarray(Image.open(img_path)) for
-                        img_path in item]
+                for i,item in enumerate(tqdm(self.names, desc='Converting depthmaps into h5py format')):
+                    ## stack sequences of 1-channel depth imgs
+                    ## multiple datasets for HAR type
+                    data = np.stack(
+                            [np.asarray(Image.open(img_path)) for# dtype=np.uint16
+                                img_path in item], axis=0
                     )
-                )             
+                    f.create_dataset(
+                        self.num2str(i),
+                        data=data,
+                        dtype=np.int32,# cause pytorch doesn't support uint16
+                        compression="gzip",#lzf ## zlib ## szip 
+                        compression_opts=7,
+                        #chunks dont really help here because chunk cache per dataset
+                        #is set to 1MB, unless we can change it even if we do, it differs
+                        #or different datasets also if we directly store data to memory
+                        #in first run its kinda helpless to use chunking
+                        #chunks=(data.shape[0], data.shape[1], data.shape[2])
+                    )
 
             elif self.task_mode == TaskMode.HPE:
-                self.depthmaps.append(
-                    #cv2.imread(item, cv2.IMREAD_ANYDEPTH)
-                    np.asarray(Image.open(item))
+                img_shape = np.array(Image.open(self.names[0])).shape
+                num_files = len(self.names)
+                f.create_dataset(
+                        self.num2str(0), # for HPE dataset is called as if its a single item for HAR
+                        dtype=np.int32,
+                        shape=(num_files, img_shape[0], img_shape[1]),
+                        compression="gzip",
+                        compression_opts=7,
+                        chunks=(1, img_shape[0], img_shape[1])
                 )
+                data_handle = f[self.num2str(0)]
+                for i, item in tqdm(iterable=enumerate(self.names), desc='Converting depthmaps into h5py format',
+                                    total=num_files):
+                    data_handle[i] = np.array(Image.open(item))
+        self.depthmap_cachepath = filepath
 
 
     def _compute_dataset_size(self):
@@ -321,14 +411,37 @@ class HandPoseActionDataset(Dataset):
         with open(action_split_file) as f:
             all_lines = f.read().splitlines()
 
+            if self.reduce:
+                from warnings import warn
+                warn("Warning: Using reduced dataset (only Subj_1)")
+                all_lines = [line for line in all_lines \
+                    if (('Training' in line) or ('Test' in line) or ('Subject_1' in line))]
+
             if (self.task_mode == TaskMode.HAR):
-                    self.train_size = \
-                        int(([s.split(' ')[1] for i, s in \
-                                    enumerate(all_lines) if 'Training' in s])[0])
-                    test_pos, test_size = \
-                        ([(i, s.split(' ')[1]) for i, s in \
-                                    enumerate(all_lines) if 'Test' in s])[0]
-                    self.test_pos, self.test_size = test_pos, int(test_size)
+                    # # changes made for support for reduced dataset
+                    # # self.train_size = \
+                    # #     int(([s.split(' ')[1] for i, s in \
+                    # #                 enumerate(all_lines) if 'Training' in s])[0])
+                    # # test_pos, test_size = \
+                    # #     ([(i, s.split(' ')[1]) for i, s in \
+                    # #                 enumerate(all_lines) if 'Test' in s])[0]
+                    # # self.test_pos, self.test_size = test_pos, int(test_size)
+
+                    curr_mode = ''
+                    for i, line in enumerate(all_lines):
+                        if 'Training' in line:
+                            curr_mode = 'TRAIN'
+                            continue    # go to next line
+                        elif 'Test' in line:
+                            self.test_pos = i
+                            curr_mode = 'TEST'
+                            continue
+                        else:
+                            if curr_mode == 'TRAIN':
+                                self.train_size += 1
+                            elif curr_mode == 'TEST':
+                                self.test_size += 1
+
                     #####
             elif (self.task_mode == TaskMode.HPE):
                     curr_mode = ''
@@ -390,4 +503,6 @@ class HandPoseActionDataset(Dataset):
                 self.action_class_dict[i] = line.split(' ')[1]
                
             self.action_classes = len(self.action_class_dict)
+
+
 

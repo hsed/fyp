@@ -20,9 +20,10 @@ def main(config, resume):
     torch.cuda.manual_seed(1)
     
     train_logger = Logger()
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
     # setup data_loader instances
-    print("=> Loading data...")
+    print("=> Configuring data_loader...")
     data_loader = get_instance(module_data, 'data_loader', config)
     valid_data_loader = data_loader.split_validation()
 
@@ -55,13 +56,15 @@ def main(config, resume):
     optimizer = get_instance(torch.optim, 'optimizer', config, trainable_params)
     lr_scheduler = get_instance(torch.optim.lr_scheduler, 'lr_scheduler', config, optimizer)
 
+    print("\n=> Building trainer...")
     trainer = Trainer(model, loss, metrics, optimizer, 
                       resume=resume,
                       config=config,
                       data_loader=data_loader,
                       valid_data_loader=valid_data_loader,
                       lr_scheduler=lr_scheduler,
-                      train_logger=train_logger)
+                      train_logger=train_logger,
+                      )
 
     print("\nTraining...")
     trainer.train()
