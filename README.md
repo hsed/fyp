@@ -87,19 +87,15 @@
 - [x] Train+Test
 
 ### Baseline HPE/HPG
-- [ ] Better and faster image loading..
-  - [x] Convert all openCV loading to PIL loading as its much faster (predicts ~20mins vs ~30mins)
-  - [ ] Create new h5py saving procedure based on model type (hpe,har) and dataset type (train,test)
-  - [ ] find clever way to automatically laod the correct dataset, for validation no need to worry as pytorch dataloader majically handles it, it only uses a sampler etc. underlying dataset obj is only one
-  - [ ] save h5py files and load appropriately, test on init if file exits if not do the loading...
-  - [ ] test reading from h5py files and see perf difference vs no file real
-  - [ ] code (can also write instead on every file read but maybe slower...):
-  ```py
-    with open('data.h5py', 'wa') as f:
-        for i,item in self.depthmaps:
-            f.create_dataset('%d' % i , item)
-  ```
+- [x] Better and faster image loading using h5py.. (**~30mins** per train_set using PIL -> **~1s** per train set using h5py, gzip compression level 7; both tested on 4 workers)
+  - [x] Convert all openCV loading to PIL loading as its a bit faster (predicts ~20mins vs ~30mins)
+  - [x] Create new h5py saving procedure based on model type (hpe,har) and dataset type (train,test)
+  - [x] find clever way to automatically laod the correct dataset, for validation no need to worry as pytorch dataloader magically handles it, it only uses a sampler etc. underlying dataset obj is only one
+  - [x] save h5py files and load appropriately, test on init if file exits if not do the loading...
+  - [x] test reading from h5py files and see perf difference vs no file real
+  - [x] Have persistent data loader to load only once at start of experiment to memory
 - [ ] Baseline Experiments
+  - [ ] HPE training on FHAD (depth,keypoint, action)
   - [ ] VAE vs AE
     - [ ] Import Models from spurra/vae-hands-3d
     - [ ] Test pre-trained models, see perf on dataset
@@ -126,13 +122,69 @@ v2v-pytorch
 
 ## Experiments
 ### Experiment #1: Train DeepPrior HPE on FirstPersonHandAction dataset
+Input: Depth; Output: Keypoints
 
-### Experiment #1: Train DeepPrior HPE on FirstPersonHandAction dataset
+#### Progress:
+- [x] Cacheable procedure to load train/test flat sequences of images
+- [ ] Incorporate original deep-prior preprocessing with augmentation
+  - [x] X,Y pre-process+augment
+  - [ ] only Y pre-process+aug for pca
+  - [ ] PCA and pca learning
+- [ ] Train on orig deep-prior++ with orig method i.e. augmentation
+- [ ] Add procedure to validate usign custom metric (3D error) per epoch
+- [ ] Perform NEW pre-processing on depth images without any augmentation
+- [ ] Perform NEW pre-processing on keypoints images without any augmentation
+- [ ] Train on NEW without augmentation
+- [ ] Add NEW augmentation procedures to pre-processing
+- [ ] Train NEW with augmentation
+- [ ] ???
+
+
+NEW: no depth thresholding, better method for standardisation, better method for cropping
+     using 40px padded bounding box in 2D
+
+#### Results
+Validation is a split of 0.2 from trainset
+Test scores are obtained by training on entire train_set and using test_set as validation
+for early stopping procedures
+
+To check all hyper-param values chosen, see the json config file in timestamp folder.
+
+| Experiment | Timestamp | Avg_3D_error_val | Avg_3D_error_t | Notes |
+| ---- | ---- | ---- | ---- | ---- |
+
+
+
+### Experiment #1: Train DeepPrior HPE with Action on FirstPersonHandAction dataset
 
 #### Setup
 
+#### Compression Updates
+
+GZIP, 7 -> 47s; ~500MB
+
+GZIP,7, bigger cache block -> 56s
+
+GZIP,4, bigger cache block -> 40s;1.1GB
 
 
+LZF, my laptop -> ~21s; 1.9GB!
+GZIP,4, my laptop -> ~24s; 0.78GB
+GZIP,7, my laptor -> ~20s; 0.68 GB <---sticking with this for now
+
+## joblib methods -- untested oon my laptop, file size is roughly LZF size
 ```
+
 tmux attach -t 0
+
+<ctrl+b>, w
+
+<select window>
 ```
+
+
+## new procedure
+
+iterate through the data loader in the beginning and everyitem will be a list of two items
+
+one is the inputs the other is the outputs 

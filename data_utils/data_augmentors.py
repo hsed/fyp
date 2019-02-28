@@ -61,6 +61,10 @@ def comToBounds(com, crop_size_3D, fx, fy):
 
         from deep-prior-pp
     """
+    # TODO: change this function for FHAD, no Z thresholding
+    # and for region, project keypoints to px coords then extract
+    # rect boundary with 40px padding on top,bottom,left,right w.r.t the extremum
+    # coords (e.g. leftmost joint, topmost joint etc)
     if np.isclose(com[2], 0.):
         raise RuntimeError( "Error: CoM ill-defined! This is not implemented")
 
@@ -105,6 +109,7 @@ def getCrop(dpt, xstart, xend, ystart, yend, zstart, zend, thresh_z=True, backgr
     else:
         raise NotImplementedError()
 
+    # TODO. remove thresh Z in future
     if thresh_z is True:
         msk1 = np.logical_and(cropped < zstart, cropped != 0)
         msk2 = np.logical_and(cropped > zend, cropped != 0)

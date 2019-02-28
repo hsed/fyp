@@ -1,13 +1,14 @@
 from enum import Enum, IntEnum, unique
 
+from itertools import chain
+
+
 @unique
 class BaseDataType(IntEnum):
     '''
         Base-class to define enum types
         Used by dataset and transformer objects
-
     '''
-
     DEPTH = 0
     JOINTS = 1
     COM = 2
@@ -17,6 +18,28 @@ class BaseDataType(IntEnum):
     JOINTS_SEQ = 6
     COM_SEQ = 7
     NAME_SEQ = 8
+
+@unique 
+class TransformDataType(IntEnum):
+    '''
+        All negative values are non-standard, mainly used for debugging
+        and for transformation
+
+        all these datatypes grow backwards
+    '''
+    
+    AUG_TRANSF_MATX = -7
+    CROP_TRANSF_MATX = -6
+    COM_ORIG_PX = -5
+    JOINTS_ORIG_PX = -4
+    COM_ORIG_MM = -3
+    JOINTS_ORIG_MM = -2
+    DEPTH_ORIG = -1
+    # All values >= 0 are reserved!
+
+
+ExtendedDataType = IntEnum('ExtendedDataType', 
+                            [(i.name, i.value) for i in chain(TransformDataType, BaseDataType)])
 
 @unique
 class BaseDatasetType(Enum):
@@ -42,3 +65,20 @@ class BaseTaskType(Enum):
     '''
     HAR = 'har'
     HPE = 'hpe'
+
+
+@unique
+class FHADCameraIntrinsics(Enum):
+    # Focal Length
+    FX = 475.065948
+    FY = 475.065857
+
+    # image center
+    UX = 315.944855
+    UY = 245.287079
+
+
+@unique
+class DepthParameters(Enum):
+    OUT_PX=128
+    DPT_RANGE_MM=200

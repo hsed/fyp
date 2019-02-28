@@ -1,7 +1,9 @@
 import numpy as np
 import torch
+import h5py
 
 from torch.nn.utils.rnn import pack_sequence
+from torch._six import int_classes
 
 class CollateJointsSeqBatch(object):
     def __init__(self):
@@ -65,6 +67,45 @@ class CollateJointsSeqBatch(object):
         # required to be long
         seq_idx_arr = torch.from_numpy(seq_idx_arr.astype(np.int64))
 
-        targets_sorted_asc = torch.from_numpy(targets_sorted_asc)
+        targets_sorted_asc = torch.from_numpy(targets_sorted_asc.astype(np.int64))#required to be long only in windows?
 
         return ((packed_inputs, seq_idx_arr), targets_sorted_asc)
+
+
+
+class CollateDepthJointsBatch(object):
+    def __init__(self):
+        pass
+
+    
+    def __call__(self, batch):
+        '''
+            Batch Format:
+            - The format is a list of exactly what is returned by the last transformer of
+              the dataset
+            - In our case that's a tuple with first elem as variable sized joints_seq
+              and a single idx for action
+            - joints_seq is already in numpy.ndarray format
+        '''
+
+        # print("Type_of_batch: ", type(batch))
+        # print("Type_of_batch[0]: ", type(batch[0]))
+        # print("Type_of_batch[0][0]: ", type(batch[0][0]))
+
+        # print("Len_of_batch: ", len(batch))
+        # print("Len_of_batch[0]: ", len(batch[0]))
+        # print("Len_of_batch[0][0]: ", len(batch[0][0]))
+
+        # batch[i] --> ith (== item_idx) (input,output) tuple
+        # batch[i][0] --> ith input
+        # batch[i][1] --> ith output
+        def collate_h5py(samples):
+          if isinstance(samples[0], h5py._hl.dataset.Dataset):
+            return torch.stack([torch.from_numpy(s.value) for s in samples], 0)
+          elif isinstance(samples[0], np.ndarray):
+            return torch.stack([torch.from_numpy(s) for s in samples], 0)
+        
+        
+        # required to be long
+        transposed = zip(*batch)
+        return [collate_h5py(samples) for samples in transposed]
