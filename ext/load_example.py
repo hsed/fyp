@@ -5,6 +5,7 @@ import trimesh
 from matplotlib import pyplot as plt
 from PIL import Image
 
+#python load_example.py  --root ..\datasets\hand_pose_action --subject Subject_1 --action_name open_juice_bottle --seq_idx 2 --frame_idx 0 --obj juice
 
 # Loading utilities
 def load_objects(obj_root):
@@ -121,6 +122,8 @@ if __name__ == '__main__':
     obj_root = os.path.join(args.root, 'Object_models')
     obj_trans_root = os.path.join(args.root, 'Object_6D_pose_annotation_v1_1')
     skel = get_skeleton(sample, skeleton_root)[reorder_idx]
+    #print("Shel.shape: ", skel.shape)
+    
     if args.obj is not None:
         # Load object mesh
         object_infos = load_objects(obj_root)
@@ -149,6 +152,7 @@ if __name__ == '__main__':
     skel_camcoords = cam_extr.dot(
         skel_hom.transpose()).transpose()[:, :3].astype(np.float32)
 
+    #print("Skel_camcord_shape: ", skel_camcoords.shape, "Skel_camcoord[:2,:]:\n", skel_camcoords[:3,:])
     skel_hom2d = np.array(cam_intr).dot(skel_camcoords.transpose()).transpose()
     skel_proj = (skel_hom2d / skel_hom2d[:, 2:])[:, :2]
 

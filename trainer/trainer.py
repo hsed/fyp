@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torchvision.utils import make_grid
 from trainer import BaseTrainer
+from data_utils import PersistentDataLoader
 
 from tqdm import tqdm
 
@@ -16,8 +17,11 @@ class Trainer(BaseTrainer):
                  data_loader, valid_data_loader=None, lr_scheduler=None, train_logger=None):
         super(Trainer, self).__init__(model, loss, metrics, optimizer, resume, config, train_logger)
         self.config = config
-        self.data_loader = data_loader
-        self.valid_data_loader = valid_data_loader
+        # persistent wrapper to load all data to RAM
+        self.data_loader = PersistentDataLoader(data_loader, load_on_init=True) \
+                                                if config['trainer']['persistent_storage'] else data_loader
+        self.valid_data_loader = PersistentDataLoader(valid_data_loader, load_on_init=True) \
+                                                if config['trainer']['persistent_storage'] else data_loader
         self.do_validation = self.valid_data_loader is not None
         self.lr_scheduler = lr_scheduler
         self.log_step = 1#int(np.sqrt(data_loader.batch_size))
