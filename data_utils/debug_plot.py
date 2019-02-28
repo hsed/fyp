@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cmap
 
-from .dp_augment import *
+from .data_augmentors import *
 
 '''
     TODO: MOVE TO VIZUAL...py in future!
@@ -12,7 +12,7 @@ from .dp_augment import *
 
 
 def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, 
-            dpt_orig_aug=None, dpt_crop_aug=None, crop_transf_matx=None, 
+            crop_transf_matx, dpt_orig_aug=None, dpt_crop_aug=None, 
             aug_transf_matx=None, aug_mode=None, aug_val=None):
     '''
         All matrices supplied are homogenous projection matrix must work with
@@ -26,7 +26,7 @@ def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig,
     ax = fig.add_subplot(221)
     ax.imshow(dpt_orig, cmap=cmap.jet)
     ax.plot(com_px_orig[0], com_px_orig[1], 'kx')
-    ax.plot(keypt_px_orig[:,0], keypt_px_orig[:, 1], marker='.', linewidth=0) ## remove line...
+    ax.plot(keypt_px_orig[:,0], keypt_px_orig[:, 1], marker='.', linewidth=0, color='g') ## remove line...
     ax.set_title("Original")
     
     com_px_crop = affineTransform2D(crop_transf_matx, com_px_orig)
