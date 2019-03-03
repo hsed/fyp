@@ -45,8 +45,10 @@ def debug():
                                                 shuffle=False,
                                                 validation_split=0.0,
                                                 num_workers=0,# debugging
-                                                debug=True,
-                                                reduce=True
+                                                debug=False,
+                                                reduce=True,
+                                                use_pca_cache=True,
+                                                pca_overwrite_cache=True,#False,
                                             )
         
         
@@ -68,7 +70,7 @@ def debug():
         optimizer = torch.optim.Adam(hpe_baseline.parameters())
         criterion = torch.nn.MSELoss()
 
-        persistent_data_loader = PersistentDataLoader(hpe_train_loader)
+        #persistent_data_loader = PersistentDataLoader(hpe_train_loader)
 
         
         print("\n=> [%s] Debugging Data Loader(s)" % elapsed())
@@ -76,10 +78,10 @@ def debug():
         tmp_item = None
         max_num_batches = 2#99999
         
-        with tqdm(total=len(persistent_data_loader), desc="Loading max %d batches for HPE" % max_num_batches) \
+        with tqdm(total=len(hpe_train_loader), desc="Loading max %d batches for HPE" % max_num_batches) \
             as tqdm_pbar:
             t = time.time()
-            for i, item in enumerate(persistent_data_loader):
+            for i, item in enumerate(hpe_train_loader):
                 if i > max_num_batches:
                    break
                 #print("Got ", i, " Shape: ", item[0].shape)
@@ -88,12 +90,12 @@ def debug():
         print("HPE Data Loading Took: %0.2fs\n" % (time.time() - t) )
 
         
-        with tqdm(total=len(persistent_data_loader), desc="Reloading max %d batches for HPE" % max_num_batches) \
-            as tqdm_pbar:
-            for i, item in enumerate(persistent_data_loader):
-                if i > max_num_batches:
-                   break
-                tqdm_pbar.update(1)
+        # with tqdm(total=len(persistent_data_loader), desc="Reloading max %d batches for HPE" % max_num_batches) \
+        #     as tqdm_pbar:
+        #     for i, item in enumerate(persistent_data_loader):
+        #         if i > max_num_batches:
+        #            break
+        #         tqdm_pbar.update(1)
 
 
         print("\n=> [%s] Debugging single batch training for HPE" % elapsed())
@@ -101,14 +103,12 @@ def debug():
         print("Info: Detected type is %s" % ('TUPLE' if isinstance(item[0], tuple) else \
             'TORCH.TENSOR' if isinstance(item[0], torch.Tensor) else 'UNKNOWN'))
         losses = []
-        (data, target) = tmp_item
-        resizer  = torchvision.transforms.Resize(size=(128,128))
-        target = target[:, :30].float() #temporary until we can get pca to work
-        # unsqueeze adds another dimension because pil image trasnformer needs it
-        to_pil = torchvision.transforms.ToPILImage()
-        data = torch.stack(
-            [torch.from_numpy( np.asarray(resizer(to_pil(item.unsqueeze(0)))) ) for item in data]
-        ).unsqueeze(1).float()
+        (data, target) = tmp_item[0].to(torch.float32), tmp_item[1].to(torch.float32)
+
+        print("DATA_MIN:", data.min(), "DATA_MAX:", data.max(),
+              "\tTARGET_MIN:", target.min(), "TARGET_MAX:", target.max())
+
+        
         print("Input Shape:", data.shape, " Output Shape:", target.shape)
         for _ in range(10):
             output = hpe_baseline(data)

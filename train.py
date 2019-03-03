@@ -43,13 +43,45 @@ def main(config, resume):
     # build model architecture
     print("\n=> Building model...")
     model = get_instance(module_arch, 'arch', config)
-    print(model)
+    #print(model)
     
     # get function handles of loss and metrics
     print("\n=> Building loss and optimizer modules...")
     loss = getattr(module_loss, config['loss'])
     metrics = [getattr(module_metric, met) for met in config['metrics']]
+
+    ## special case for HPE
+    if module_metric.Avg3DError in metrics:
+        idx = metrics.index(module_metric.Avg3DError)
+        '''
+            This special metric requires a PCA decoder class with correct
+            parameters i.e. weight and bias matx pre-learnt during PCA training.
+
+            Currently, the implementation is such that the dataloader class for HPE
+            loads PCA and saves weights and biases, now these are automatically
+            initialised and can be accessed from the dataloader class.
+
+            Note: PCA is always learnt on training data with likely data augmentation
+
+            We replace the uninitialised reference with the initialised one here.
+
+        '''
+        ### init metric classes for future use
+        avg_3d_err_metric = module_metric.Avg3DError(cube_side_mm=data_loader.params['cube_side_mm'],
+                                                     ret_avg_err_per_joint=False)
+        
+        avg_3d_err_metric.pca_decoder = \
+            module_arch.PCADecoderBlock(num_joints=data_loader.params['num_joints'],
+                            num_dims=data_loader.params['world_dim'],
+                            pca_components=data_loader.params['pca_components'])
+        
+        ## weights are init as transposed of given
+        avg_3d_err_metric.pca_decoder.initialize_weights(weight_np=data_loader.pca_weights_np,
+                                                              bias_np=data_loader.pca_bias_np)
+        metrics[idx] = avg_3d_err_metric
+        
     
+
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())

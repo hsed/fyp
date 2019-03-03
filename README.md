@@ -96,6 +96,13 @@
   - [x] Have persistent data loader to load only once at start of experiment to memory
 - [ ] Baseline Experiments
   - [ ] HPE training on FHAD (depth,keypoint, action)
+    - [ ] Finalise PCA
+      - [ ] Training on RAW KeyPt
+      - [ ] Training with Data Aug
+      - [ ] Saving/Loading Cache
+      - [ ] Testing Pipeline works fine for transformation
+      - [ ] Full pipeline testing like Depp-Prior as Avg 3D error as new metric
+    - [ ] Train HPE on Action+Depth => KeyPt
   - [ ] VAE vs AE
     - [ ] Import Models from spurra/vae-hands-3d
     - [ ] Test pre-trained models, see perf on dataset
@@ -188,3 +195,15 @@ tmux attach -t 0
 iterate through the data loader in the beginning and everyitem will be a list of two items
 
 one is the inputs the other is the outputs 
+
+
+## validate extra metrics
+targets ; outputs ;
+
+if outputs is of type tuple then...
+first elem is for val_loss of network
+second elem is for keypoint error
+
+so basically condition is... 
+
+if it is a tuple send the second output to metric_eval and first output for val_loss
