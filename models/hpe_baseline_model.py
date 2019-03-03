@@ -154,11 +154,46 @@ class ResBlock(nn.Module):
         return self.res_branch(x) + self.skip_con(x)
 
 
+class PCADecoderBlock(nn.Module):
+    '''
+        Useful as standalone for metric calc
+    '''
+    def __init__(self, num_joints=21, num_dims=3, pca_components=30,
+                 no_grad=True):
+        self.num_joints, self.num_dims = num_joints, num_dims
+        super(PCADecoderBlock, self).__init__()
+
+        ## back projection layer
+        self.main_layer = nn.Linear(pca_components, self.num_joints*self.num_dims)
+
+        if no_grad:
+            self.main_layer.weight.requires_grad = False
+            self.main_layer.bias.requires_grad = False
+    
+    def forward(self, x, reshape=True):
+        return self.main_layer(x).view(-1, self.num_joints, self.num_dims) \
+            if reshape else self.main_layer(x)
+    
+
+    def initialize_weights(self, weight_np, bias_np):
+        '''
+            Sets weights as transposed of what is supplied and bias is set as is
+        '''
+        self.main_layer.weight = \
+            torch.nn.Parameter(torch.tensor(weight_np.T, dtype=self.main_layer.weight.dtype))
+        self.main_layer.bias = \
+            torch.nn.Parameter(torch.tensor(bias_np, dtype=self.main_layer.bias.dtype))
+        
+        self.main_layer.weight.requires_grad = False
+        self.main_layer.bias.requires_grad = False
+
+
+
 
 
 class DeepPriorPPModel(nn.Module):
     def __init__(self, input_channels=1, num_joints=21, num_dims=3, pca_components=30, dropout_prob=0.3,
-                 train_mode=True, weight_matx_np=None, bias_matx_np=None):
+                 train_mode=True, weight_matx_np=None, bias_matx_np=None, init_w=True):
         self.num_joints, self.num_dims = num_joints, num_dims
         self.train_mode = train_mode # when True output is PCA, else output is num_dims*num_joints
 
@@ -192,11 +227,14 @@ class DeepPriorPPModel(nn.Module):
         ]))
 
         ## back projection layer
-        self.final_layer = nn.Linear(pca_components, self.num_joints*self.num_dims)
+        self.final_layer = PCADecoderBlock(num_joints=num_joints,
+                                           num_dims=num_dims)
 
         # currently done according to resnet implementation (He init conv layers)
         # also init last layer with pca__inverse_transform vals and make it fixed
-        self._initialize_weights(w_final=weight_matx_np, b_final=bias_matx_np)
+        # option to delay init for a future time
+        if init_w:
+            self.initialize_weights(w_final=weight_matx_np, b_final=bias_matx_np)
 
 
     def forward(self, x):
@@ -207,7 +245,11 @@ class DeepPriorPPModel(nn.Module):
         x = x.view(-1, 8*8*256)
         x = self.linear_layers(x)
 
-        return x
+        # usually people use self.training which is built in but in our case
+        # that would lead to val returining y in keypoint space
+        # rather than oca space
+        # reshape (63,) -> (21, 3) done automatically
+        return x if self.train_mode else self.final_layer(x)
     
     def forward_eval(self, x):
         ## use this function at evaluation i.e. testing
@@ -225,7 +267,7 @@ class DeepPriorPPModel(nn.Module):
 
     # TODO: change this to as done in deep-prior?
     # currently as porvided by torchvision resnet implementation
-    def _initialize_weights(self, w_final=None, b_final=None):
+    def initialize_weights(self, w_final=None, b_final=None):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -241,13 +283,7 @@ class DeepPriorPPModel(nn.Module):
         if (w_final is not None and b_final is not None):
             # we use torch.tensor() method to create a copy of the array provided.
             # as this method always copies data
-            self.final_layer.weight = \
-                torch.nn.Parameter(torch.tensor(w_final, dtype=self.final_layer.weight.dtype))
-            self.final_layer.bias = \
-                torch.nn.Parameter(torch.tensor(b_final, dtype=self.final_layer.bias.dtype))
-            
-            self.final_layer.weight.requires_grad = False
-            self.final_layer.bias.requires_grad = False
+            self.final_layer.initialize_weights(w_final, b_final)
             #print("\n\nNEW WEIGHTS: \n", self.final_layer.weight, "\nShape: ", self.final_layer.weight.shape)
             #print("\nNEW BIAS: \n", self.final_layer.bias, "\nShape: ", self.final_layer.bias.shape, "\n")
     
