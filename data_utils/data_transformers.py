@@ -10,7 +10,7 @@ import torch
 import numpy as np
 
 from .data_augmentors import *
-from .base_data_types import ExtendedDataType as DT, FHADCameraIntrinsics as CAM, \
+from datasets import ExtendedDataType as DT, FHADCameraIntrinsics as CAM, \
                              DepthParameters as DepParam
 
 from .debug_plot import plotImg
@@ -60,15 +60,12 @@ def standardiseKeyPointsCube(keypoints_mm, cube_side_mm, copy_arr=False):
         keypoints_mm = np.asarray(keypoints_mm.copy())
     return keypoints_mm / (cube_side_mm / 2.)
 
-def unStandardiseKeyPointsCube(keypoints_std, cube_side_mm, copy_arr=False):
+def unStandardiseKeyPointsCube(keypoints_std, cube_side_mm):
     '''
         `keypoints_std` => keypoints in range [-1, 1]\n
         `cube_side_mm` => any crop length in mm (all sides assumed equal)\n
         returns val in range [-cube_side_mm/2, +cube_side_mm/2]
     '''
-    # TODO: change this for better normalisation
-    if copy_arr:
-        keypoints_std = np.asarray(keypoints_std.copy())
     return keypoints_std * (cube_side_mm / 2.)
 
 
@@ -230,13 +227,25 @@ class JointCentererStandardiser(TransformerBase):
         
         #joints = sample[DT.JOINTS]#.reshape(self.num_joints, self.world_dim)
         #coms = sample[DT.COM]
+
+        com = sample[DT.COM]
+        dpt_range = self.crop_shape3D_mm[2]
+
+        # only perform aug adjustments if aug actually happened
+        if DT.AUG_MODE in sample:
+            if sample[DT.AUG_MODE] == AugType.AUG_TRANS:
+                # add augmentation offset
+                com = com + sample[DT.AUG_PARAMS]
+            if sample[DT.AUG_MODE] == AugType.AUG_SC:
+                # scale dpt_range accordingly
+                dpt_range = dpt_range*sample[DT.AUG_PARAMS]
         
         ## broadcasting is done automatically here -- centering: CoM is new origin in 3D space
-        sample[DT.JOINTS] = sample[DT.JOINTS] - sample[DT.COM]
+        sample[DT.JOINTS] = sample[DT.JOINTS] - com
 
         ## standardisation -- values between -1 and 1
         sample[DT.JOINTS] = \
-            standardiseKeyPointsCube(sample[DT.JOINTS], self.crop_shape3D_mm[2])\
+            standardiseKeyPointsCube(sample[DT.JOINTS], dpt_range)\
                                      .reshape(self.num_joints*self.world_dim)
 
         ### all other values returned as is
@@ -262,6 +271,9 @@ class JointSeqCentererStandardiser(TransformerBase):
                 'action_seq': _,
             }
         '''
+
+        ## TODO: adjust com and crop_shape3D_mm if data is augmented!
+        ## see non-sequence version for example
         
         joints_seq = sample[DT.JOINTS_SEQ]#.reshape(-1, self.num_joints, self.world_dim)
         coms_seq = sample[DT.COM_SEQ]
@@ -271,6 +283,34 @@ class JointSeqCentererStandardiser(TransformerBase):
         sample[DT.JOINTS_SEQ] = \
             standardiseKeyPointsCube(sample[DT.JOINTS_SEQ], self.crop_shape3D_mm[2])\
                                      .reshape(-1, self.num_joints*self.world_dim)
+
+        ### all other values returned as is
+        return sample
+
+
+class JointUnstandardiser(TransformerBase):
+    '''
+
+        Performs unstandardisation to set values in range
+        (-1,1) -> (-crop_shape3D_mm/2, +crop_shape3D_mm/2)
+
+        Note: this does NOT do decentering!
+        Note 2: No fixes (special cases) for data augmentation so only use
+        for testing!
+
+        Does reshape (63,) -> (21,3)
+
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+    
+
+    def __call__(self, sample):
+
+        ## ustandardisation -- values between -1 and 1
+        sample[DT.JOINTS] = \
+            unStandardiseKeyPointsCube(sample[DT.JOINTS], self.crop_shape3D_mm[2])\
+                                     .reshape(self.num_joints, self.world_dim)
 
         ### all other values returned as is
         return sample
@@ -334,8 +374,8 @@ class DepthCropper(TransformerBase):
         com_px_orig = self.mm2px(com_mm_orig)
 
 
-        print("KeyptShape: ", keypt_px_orig.shape, "Com_shape:", com_px_orig.shape)
-        print("KeyptVals:\n", keypt_px_orig[:3,:], "\nCom_val:", com_px_orig)
+        #print("KeyptShape: ", keypt_px_orig.shape, "Com_shape:", com_px_orig.shape)
+        #print("KeyptVals:\n", keypt_px_orig[:3,:], "\nCom_val:", com_px_orig)
         ### cropping + centering ###
         ## convert input image to cropped, centered and resized 2d img
         ## required CoM in px value
@@ -368,7 +408,7 @@ class DepthCropper(TransformerBase):
         ## actual useful data type and tranf matx
         ## float32 type is needed for standardisation, done automatically
         ## if augmentation is called
-        sample[DT.DEPTH] = dpt_crop.astype(np.float32)
+        if dpt_crop is not None: sample[DT.DEPTH] = dpt_crop.astype(np.float32)
         sample[DT.CROP_TRANSF_MATX] = crop_transf_matx
 
         return sample
@@ -466,12 +506,14 @@ class DepthAndJointsAugmenter(TransformerBase):
         plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, 
                 crop_transf_matx=crop_transf_matx, aug_transf_matx=aug_transf_matx,
                 aug_mode=aug_mode, aug_val=aug_param, dpt_crop_aug=dpt_crop_aug) \
-                    if self.debug_mode else None
+                    if (self.debug_mode and dpt_orig is not None) else None
 
         # store mm_orig_aug as default value, now only standardisation is needed
         sample[DT.DEPTH] = dpt_crop_aug
         sample[DT.JOINTS] = self.px2mm_multi(keypt_px_orig_aug) # keypt_mm_orig_aug
         sample[DT.COM] = self.px2mm(com_px_orig_aug) # com_mm_orig_aug
+        sample[DT.AUG_MODE] = aug_mode
+        sample[DT.AUG_PARAMS] = aug_param
 
         return sample
         
@@ -495,9 +537,24 @@ class DepthStandardiser(TransformerBase):
         ### Standardisation ###
         ## This must be the last step always!
         # TODO: dpt_range_mm => 200mm change to something more meaningful for FHAD
+        # TODO: also when there is data aug of scale or translation this maybe
+        # wrong as the cube depth is now changed or com z_val has changed
+        
+        com_z = sample[DT.COM_ORIG_MM][2]
+        dpt_range = self.dpt_range_mm
+        
+        # only perform aug adjustments if aug actually happened
+        if DT.AUG_MODE in sample:
+            if sample[DT.AUG_MODE] == AugType.AUG_TRANS:
+                # add augmentation offset
+                com_z = com_z + sample[DT.AUG_PARAMS][2]
+            if sample[DT.AUG_MODE] == AugType.AUG_SC:
+                # scale dpt_range accordingly
+                dpt_range = dpt_range*sample[DT.AUG_PARAMS]
+
         sample[DT.DEPTH] = \
             standardiseImg(sample[DT.DEPTH],
-                           sample[DT.COM_ORIG_MM][2], self.dpt_range_mm)[np.newaxis, ...]
+                           com_z, dpt_range)[np.newaxis, ...]
           
         return sample
 
@@ -515,7 +572,7 @@ class PCATransformer(TransformerBase):
     '''
     def __init__(self, dtype=torch.float,
                  n_components=30, use_cache=False, overwrite_cache=False,
-                 cache_dir='../datasets/hand_pose_action'):
+                 cache_dir='datasets/hand_pose_action'):
         
         ## filled on fit, after fit in cuda the np versions copy the matrix and mean vect
         self.transform_matrix_torch = None
@@ -605,8 +662,9 @@ class PCATransformer(TransformerBase):
         ## assume input is of torch type
         ## can put if condition here
         if X.dtype != self.dtype or X.device != self.device:
-            # make sure to switch to cpu
-            X.to(device=self.device, dtype=self.dtype)
+            # make sure to switch to float32 if thats default
+            # note need '=' as this is not inplace operation!
+            X = X.to(device=self.device, dtype=self.dtype)
         
         if self.transform_matrix_np is not None:
             Warning("PCA transform matx already exists, refitting...")
@@ -648,6 +706,7 @@ class PCATransformer(TransformerBase):
         
         if return_X_no_mean:
             # returns the X matrix as mean removed! Also a torch tensor!
+            print("TYPES: ", "X_TYPE: ", X.dtype, "OTHER: ", torch.from_numpy(self.mean_vect_np).expand_as(X).dtype)
             return X - torch.from_numpy(self.mean_vect_np).expand_as(X)
         else:
             return None

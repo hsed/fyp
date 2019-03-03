@@ -11,9 +11,9 @@ from PIL import Image
 from tqdm import tqdm
 from torch.utils.data import Dataset
 
-from data_utils import BaseDataType as DT
-from data_utils import BaseDatasetType as DatasetMode
-from data_utils import BaseTaskType as TaskMode
+from .base_data_types import BaseDataType as DT, \
+                             BaseDatasetType as DatasetMode, \
+                             BaseTaskType as TaskMode
 
 #### TO HEAVILY EDIT TO SUPPORT HAND ACTION DATASET
 ## starting from 0, each component of y_gt_mm_keypoints is
@@ -149,6 +149,9 @@ class HandPoseActionDataset(Dataset):
 
         
         self._load()
+
+        self.retrieve_depth = retrieve_depth
+        self.preload_depth = preload_depth
         
         if retrieve_depth:
             self._verify_depth_cache(data_mode, task_mode)
@@ -168,7 +171,8 @@ class HandPoseActionDataset(Dataset):
         # any depth to allow 16-it images as the depths are 16-bit here
 
         ## need to do this here cause of bug
-        if self.depthmap_cachefile is None:
+        if self.depthmap_cachefile is None and self.retrieve_depth is True \
+           and self.preload_depth is False:
             self.depthmap_cachefile = h5py.File(self.depthmap_cachepath, 'r', libver='latest', swmr=True)
 
         if self.task_mode == TaskMode.HAR:
@@ -181,17 +185,24 @@ class HandPoseActionDataset(Dataset):
                 DT.NAME_SEQ: self.names[index], # sample names => R^{NUM_FRAMES x 1}
                 DT.JOINTS_SEQ: self.joints_world[index], # 3d joints => R^{NUM_FRAMES x 63}
                 DT.COM_SEQ: self.coms_world[index], # => R^{NUM_FRAMES x 3}
-                DT.DEPTH_SEQ: self.depthmap_cachefile[self.num2str(index)].value, #.value, #depthmaps, # depthmaps => R^{NUM_FRAMES x 480 x 640}
+                DT.DEPTH_SEQ: None if self.retrieve_depth is False \
+                              else self.depthmap_cachefile[self.num2str(index)].value \
+                              if self.preload_depth is False \
+                              else self.depthmaps[index], #depthmaps => R^{NUM_FRAMES x 480 x 640}
                 DT.ACTION: self.actions[index], # action => R^{1}
             }
 
         elif self.task_mode == TaskMode.HPE:
             #depthmap = cv2.imread(self.names[index], cv2.IMREAD_ANYDEPTH)
+            # once depthmap is indexed from h5py file, its a numpy array
             sample = {
                 DT.NAME: self.names[index], # sample name => R^{1}
                 DT.JOINTS: self.joints_world[index], # 3d joints of the sample => R^{63}
                 DT.COM: self.coms_world[index], # => R^{3}
-                DT.DEPTH: self.depthmap_cachefile[self.num2str(0)][index],# once indexed, its a numpy array # depthmap => R^{480 x 640}#self.depthmap_cachefile[self.num2str(index)].value
+                DT.DEPTH: None if self.retrieve_depth is False \
+                          else self.depthmap_cachefile[self.num2str(0)][index] \
+                          if self.preload_depth is False \
+                          else self.depthmaps[index], #depthmap => R^{480 x 640}
                 DT.ACTION: self.actions[index] # action => R^{1}
             }
 
@@ -399,11 +410,17 @@ class HandPoseActionDataset(Dataset):
         with h5py.File(self.depthmap_cachepath, 'r', libver='latest') as f:
             if self.task_mode == TaskMode.HAR:
                 for key,dataset in tqdm(f.items(),
-                                        desc='Preloading depthmaps to RAM',
-                                        total=len(f)):
-                    self.depthmaps.append(dataset)
+                                        desc='Preloading depthmaps to RAM'):
+                    self.depthmaps.append(dataset.value)
             elif self.task_mode == TaskMode.HPE:
-                self.depthmaps = f[self.num2str(0)] # the first dataset is entire dataset
+                # preloading as list is faster than doing no.stack on
+                # top of preload as list
+                self.depthmaps = [
+                                    f[self.num2str(0)][i] for i in tqdm(range(f[self.num2str(0)].shape[0]),
+                                                                        desc='Preloading depthmaps to RAM')
+                                 ]
+                
+                #f[self.num2str(0)].value # the first dataset is entire dataset
 
     def _compute_dataset_size(self):
         '''

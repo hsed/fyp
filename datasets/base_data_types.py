@@ -27,7 +27,8 @@ class TransformDataType(IntEnum):
 
         all these datatypes grow backwards
     '''
-    
+    AUG_PARAMS = -9
+    AUG_MODE = -8
     AUG_TRANSF_MATX = -7
     CROP_TRANSF_MATX = -6
     COM_ORIG_PX = -5

@@ -1,10 +1,9 @@
 from torchvision import datasets, transforms
 #from torch.utils.data.dataloader import default_collate
 
-from datasets import HandPoseActionDataset
+from datasets import BaseDataType, HandPoseActionDataset
 
 from .base_data_loader import BaseDataLoader
-from .base_data_types import BaseDataType
 from .data_transformers import *
 from .collate_functions import CollateJointsSeqBatch, CollateDepthJointsBatch
 
@@ -62,7 +61,8 @@ class JointsActionDataLoader(BaseDataLoader):
                                         JointSeqCentererStandardiser(),
                                         ToTuple(extract_type='joints_action_seq')
                                     ])
-        self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'har', transform=trnsfrm, reduce=reduce)
+        self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'har', transform=trnsfrm, reduce=reduce,
+                                             retrieve_depth=False)
 
 
         ## initialise super class appropriately
@@ -103,26 +103,59 @@ class DepthJointsDataLoader(BaseDataLoader):
             'debug_mode': debug
         }
 
-        trnsfrm = transforms.Compose([
-                                        JointReshaper(**trnsfrm_base_params),
-                                        DepthCropper(**trnsfrm_base_params),
-                                        DepthAndJointsAugmenter(
-                                            aug_mode_lst=[
-                                                AugType.AUG_NONE,
-                                                AugType.AUG_ROT,
-                                                AugType.AUG_TRANS
-                                            ],
-                                            **trnsfrm_base_params),
-                                        DepthStandardiser(**trnsfrm_base_params),
-                                        JointCentererStandardiser(**trnsfrm_base_params),
-                                        PCATransformer(n_components=pca_components,
-                                                       use_cache=use_pca_cache,
-                                                       overwrite_cache=pca_overwrite_cache),
-                                        ToTuple(extract_type='depth_joints')
-                                    ])
-        self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
-                                             transform=trnsfrm, reduce=reduce)
+        # only for training
+        aug_mode_lst = [
+            AugType.AUG_NONE,
+            AugType.AUG_ROT,
+            AugType.AUG_TRANS
+        ]
+        pca_aug_mode_lst = [
+            AugType.AUG_NONE,
+            AugType.AUG_ROT,
+            AugType.AUG_TRANS
+        ]
 
+        pca_transformer = PCATransformer(n_components=pca_components,
+                                         use_cache=use_pca_cache,
+                                         overwrite_cache=pca_overwrite_cache)
+
+        if dataset_type == 'train':
+            trnsfrm = transforms.Compose([
+                                            JointReshaper(**trnsfrm_base_params),
+                                            DepthCropper(**trnsfrm_base_params),
+                                            DepthAndJointsAugmenter(
+                                                aug_mode_lst=aug_mode_lst,
+                                                **trnsfrm_base_params),
+                                            DepthStandardiser(**trnsfrm_base_params),
+                                            JointCentererStandardiser(**trnsfrm_base_params),
+                                            pca_transformer,
+                                            ToTuple(extract_type='depth_joints')
+                                        ])
+        
+        elif dataset_type == 'test':
+            trnsfrm = transforms.Compose([
+                                            JointReshaper(**trnsfrm_base_params),
+                                            DepthCropper(**trnsfrm_base_params),
+                                            DepthStandardiser(**trnsfrm_base_params),
+                                            JointCentererStandardiser(**trnsfrm_base_params),
+                                            ToTuple(extract_type='depth_joints')
+                                        ])
+
+        
+        self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
+                                                transform=trnsfrm, reduce=reduce)
+
+        ### before exiting ensure PCA is pre-computed (using cache on disk)
+        ### if not we need to compute
+        ### for train: used as pre-processing
+        ### for test: pca matx and mean is used for weights, bias as last layer
+        self._check_pca(data_dir, pca_transformer, 
+                        pca_aug_mode_lst, trnsfrm_base_params)
+        
+
+        self.params = trnsfrm_base_params
+        self.params['pca_components'] = pca_components
+        
 
         ## initialise super class appropriately
         super(DepthJointsDataLoader, self).\
@@ -137,46 +170,46 @@ class DepthJointsDataLoader(BaseDataLoader):
             print("Sample Joints_Std_MIN_MAX: ", test_sample[0].min(), test_sample[0].max())
 
 
-        ### before exiting ensure PCA is pre-computed (using cache on disk)
-        ### if not we need to compute
-        ### no reduce option here
-        self._check_pca(trnsfrm.transforms[-2], dataset_type)
 
-
-    def _check_pca(self, pca_transformer, dataset_type, aug_mode_lst,
+    def _check_pca(self, data_dir, pca_transformer,pca_aug_mode_lst,
                    transform_base_params):
-        if transform_pca.transform_matrix_np is None:
+        if pca_transformer.transform_matrix_np is None:
         # each sample is 1x21x3 so we use cat to make it 3997x21x3
         # id we use stack it intriduces a new dim so 3997x1x21x3
         # load all y_sample sin tprch array
         # note only train subjects are loaded!
         
             trnsfrm = transforms.Compose([
-                                            JointReshaper(**trnsfrm_base_params),
-                                            JointsAugmenter( # TODO: implem
+                                            JointReshaper(**transform_base_params),
+                                            DepthCropper(**transform_base_params),
+                                            DepthAndJointsAugmenter( # TODO: implem
                                                 aug_mode_lst=[
                                                     AugType.AUG_NONE,
                                                     AugType.AUG_ROT,
                                                     AugType.AUG_TRANS
                                                 ],
-                                                **trnsfrm_base_params),
-                                            JointCentererStandardiser(**trnsfrm_base_params),
+                                                **transform_base_params),
+                                            JointCentererStandardiser(**transform_base_params),
                                             ToTuple(extract_type='joints') # TODO: see if correct
                                         ])
 
-            y_set = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
-                                        transform=trnsfrm, reduce=False)
+            ### dont load depthmaps here!!
+            ### pca is always trained on train data, never on test!
+            ### validation set is seen by pca but it doesnt really matter we
+            ### are not tweaking pca settings (30 is kept as standard)
+            y_set = HandPoseActionDataset(data_dir, 'train', 'hpe',
+                                        transform=trnsfrm, reduce=False, retrieve_depth=False)
             
             y_pca_len = int(2e5)
             y_idx_pca = np.random.choice(len(y_set), y_pca_len, replace=True)
             #print(y_idx_pca, y_idx_pca.shape)
             #y_loader = torch.utils.data.DataLoader(y_set, batch_size=1, shuffle=True, num_workers=0)
-            print('==> Collating %d y_samples for PCA ..' % y_pca_len)
+            #print('==> Collating %d y_samples for PCA ..' % y_pca_len)
             
             fullYList = []
-            for (i, item) in enumerate(y_idx_pca):  #y_loader
+            for item in tqdm(y_idx_pca, 
+                                  desc='Collating y_samples for PCA ..'):  #y_loader
                 fullYList.append(y_set[item])
-                progress_bar(i, y_pca_len) #y_loader
             
             y_train_samples = torch.from_numpy(np.stack(fullYList)) #tuple(y_loader) #torch.cat()
             #print(fullList)
@@ -185,15 +218,20 @@ class DepthJointsDataLoader(BaseDataLoader):
                     "Min: ", np.min(y_train_samples.numpy()), "\n")
             # in future just use fit command, fit_transform is just for testing
             print('==> fitting PCA ..')
-            zz = transform_pca.fit_transform(y_train_samples)
-            print("PCA_Y_SHAPE: ", zz.shape, "MAX: ", zz.max(), "MIN: ", zz.min(), "\n")
+            y_low_dim = pca_transformer.fit_transform(y_train_samples)
+            print("PCA_Y_SHAPE: ", y_low_dim.shape, "MAX: ", y_low_dim.max(), "MIN: ", y_low_dim.min(), "\n")
             print('==> PCA fitted ..')
 
             del y_train_samples
             del fullYList
             #del y_loader
             del y_set
-
+        
+        ## save link to pca weight and bias
+        ## save these to provide to model later
+        self.pca_weights_np = pca_transformer.transform_matrix_np
+        self.pca_bias_np = pca_transformer.mean_vect_np
+            
 
 class PersistentDataLoader(object):
     '''
