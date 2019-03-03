@@ -277,7 +277,6 @@ class JointSeqCentererStandardiser(TransformerBase):
 
 
 
-
 class ActionOneHotEncoder(TransformerBase):
     '''
         A simple transformer for encoding action idx into one-hot vectors
@@ -501,6 +500,165 @@ class DepthStandardiser(TransformerBase):
                            sample[DT.COM_ORIG_MM][2], self.dpt_range_mm)[np.newaxis, ...]
           
         return sample
+
+
+class PCATransformer(TransformerBase):
+    '''
+        A simple PCA transformer, supports PCA calc from data matrix and only single sample transformations\n
+        `device` & `dtype` => torch device and dtype to use.                            
+        `n_components` => Final PCA_components to keep.                         
+        `use_cache` => whether to load from cache if exists or save to if doesn't.
+        `overwrite_cache` => whether to force calc of new PCA and save new results to disk, 
+        overwriting any prev.\n
+        PCA is calculated using SVD of co-var matrix using torch (can be GPU) but any subsequent calls
+        transform numpy-type samples to new subspace using numpy arrays.
+    '''
+    def __init__(self, dtype=torch.float,
+                 n_components=30, use_cache=False, overwrite_cache=False,
+                 cache_dir='../datasets/hand_pose_action'):
+        
+        ## filled on fit, after fit in cuda the np versions copy the matrix and mean vect
+        self.transform_matrix_torch = None
+        self.transform_matrix_np = None
+
+        self.mean_vect_torch = None
+        self.mean_vect_np = None
+        
+        ## filled on predict
+        self.dist_matx_torch = None
+
+        self.device = torch.device('cpu')   # this is needed so keep as in
+        self.dtype = dtype
+        self.out_dim = n_components
+
+        self.use_cache = use_cache
+        self.overwrite_cache = overwrite_cache
+        self.cache_dir = cache_dir
+
+        if self.use_cache and not self.overwrite_cache:
+            self._load_cache()
+                
+                
+                    
+
+    def __call__(self, sample):
+        '''
+            sample is tuple of 2 np.array (x,y)
+            later make this a dictionary
+            single y_data sample is 1D
+        '''
+        if self.transform_matrix_np is None:
+            raise RuntimeError("Please call fit first before calling transform.")
+        
+        #y_data = sample[1]
+        
+        # automatically do broadcasting if needed, but in this case we will only have 1 sample
+        # note our matrix is U.T
+        # though y_data is 1D array matmul automatically handles that and reshape y to col vector
+        return (sample[0], np.matmul(self.transform_matrix_np, (sample[1] - self.mean_vect_np)))
+    
+    
+    def _load_cache(self):
+        cache_file = os.path.join(self.cache_dir, 'pca_'+str(self.out_dim)+'_cache.npz')
+        if os.path.isfile(cache_file):
+            npzfile = np.load(cache_file)
+
+            matx_shape = npzfile['transform_matrix_np'].shape
+            vect_shape = npzfile['mean_vect_np'].shape
+
+            shared_array_base = multiprocessing.Array(ctypes.c_float, matx_shape[0]*matx_shape[1])
+            shared_array = np.ctypeslib.as_array(shared_array_base.get_obj())
+            
+            shared_array_base2 = multiprocessing.Array(ctypes.c_float, vect_shape[0])
+            shared_array2 = np.ctypeslib.as_array(shared_array_base2.get_obj())
+            
+            shared_array = shared_array.reshape(matx_shape[0], matx_shape[1])
+            #print("SharedArrShape: ", shared_array.shape)
+
+            shared_array[:, :] = npzfile['transform_matrix_np']
+            shared_array2[:] = npzfile['mean_vect_np']
+
+            self.transform_matrix_np = shared_array
+            self.mean_vect_np = shared_array2
+        else:
+            # handles both no file and no cache dir
+            Warning("PCA cache file not found, a new one will be created after PCA calc.")
+            self.overwrite_cache = True # to ensure new pca matx is saved after calc
+    
+    def _save_cache(self):
+        ## assert is a keyword not a function!
+        assert (self.transform_matrix_np is not None), "Error: no transform matrix to save."
+        assert (self.mean_vect_np is not None), "Error: no mean vect to save."
+
+        if not os.path.isdir(self.cache_dir):
+            os.makedirs(self.cache_dir, exist_ok=True)
+        
+        cache_file = os.path.join(self.cache_dir, 'pca_'+str(self.out_dim)+'_cache.npz')
+        np.savez(cache_file, transform_matrix_np=self.transform_matrix_np, mean_vect_np=self.mean_vect_np)
+
+
+    
+    
+    ## create inverse transform function?
+    
+    def fit(self, X, return_X_no_mean=False):
+        ## assume input is of torch type
+        ## can put if condition here
+        if X.dtype != self.dtype or X.device != self.device:
+            # make sure to switch to cpu
+            X.to(device=self.device, dtype=self.dtype)
+        
+        if self.transform_matrix_np is not None:
+            Warning("PCA transform matx already exists, refitting...")
+
+
+        sklearn_pca = PCA(n_components=self.out_dim)
+        sklearn_pca.fit(X.cpu().detach().numpy())
+
+        self.transform_matrix_np = sklearn_pca.components_.copy()
+        self.mean_vect_np = sklearn_pca.mean_.copy()
+
+        del sklearn_pca # no longer needed
+
+        shared_array_base = multiprocessing.Array(ctypes.c_float, self.transform_matrix_np.shape[0]*self.transform_matrix_np.shape[1])
+        shared_array = np.ctypeslib.as_array(shared_array_base.get_obj())
+        
+        shared_array_base2 = multiprocessing.Array(ctypes.c_float, self.mean_vect_np.shape[0])
+        shared_array2 = np.ctypeslib.as_array(shared_array_base2.get_obj())
+        
+        shared_array = shared_array.reshape(self.transform_matrix_np.shape[0], self.transform_matrix_np.shape[1])
+        #print("SharedMemArr", shared_array.shape)
+
+        shared_array[:, :] = self.transform_matrix_np
+        shared_array2[:] = self.mean_vect_np
+
+        del self.transform_matrix_np
+        del self.mean_vect_np
+
+        self.transform_matrix_np = shared_array
+        self.mean_vect_np = shared_array2
+
+        self.transform_matrix_np.setflags(write=False)
+        self.mean_vect_np.setflags(write=False)
+
+        if self.use_cache and self.overwrite_cache:
+            # only saving if using cache feature and allowed to overwrite
+            # if initially no file exits overwrite_cache is set to True in _load_cache
+            self._save_cache()
+        
+        if return_X_no_mean:
+            # returns the X matrix as mean removed! Also a torch tensor!
+            return X - torch.from_numpy(self.mean_vect_np).expand_as(X)
+        else:
+            return None
+    
+    
+    def fit_transform(self, X):
+        ## return transformed features for now
+        ## by multiplying appropriate matrix with mean removed X
+        # note fit if given return_X_no_mean returns X_no_mean_Torch
+        return np.matmul(self.fit(X, return_X_no_mean=True).numpy(), self.transform_matrix_np.T)
+
 
 class ToTuple(object):
     '''
