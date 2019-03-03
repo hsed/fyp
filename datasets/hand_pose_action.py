@@ -67,13 +67,15 @@ class Num2Str(object):
 
 
 class HandPoseActionDataset(Dataset):
-    def __init__(self, root, data_mode, task_mode, transform=None, reduce=False):
+    def __init__(self, root, data_mode, task_mode, transform=None, reduce=False,
+                retrieve_depth=True, preload_depth=False):
         '''
+            `data_mode` => 'train' // 'test'
             `reduce` => Train only on 1 gesture and 2 subjects, CoM won't work correctly
-            `use_refined_com` => True: Use GT MCP (ID=5) ref; False: Use refined CoM pretrained.
-                                Currently disabled
+            `retrieve_depth` => Whether or not to retrieve depth files from disk when __call__
+                                method is invoked.
             `preload_depth` => Directly load all depth maps from cache file to RAM for faster training
-                               requires sufficient RAM
+                               requires sufficient RAM, no effect when `retrieve_depth` is False
             
             Currently this class is used to load data to train a HAR
             Another class
@@ -138,17 +140,26 @@ class HandPoseActionDataset(Dataset):
         # 1 => '00000001'; For cache naming
         self.num2str = Num2Str(pad=8)
 
+        ### initialise empty lists
+        self.names = []
+        self.joints_world = []
+        self.coms_world = []
+        self.actions = []
+        self.depthmaps = []
+
         
-        ### load all the y_values and corresponding corrected CoM values using
-        ### 'train.txt' and 'center_train_refined'
         self._load()
-        self._load_depthmaps(data_mode, task_mode)
+        
+        if retrieve_depth:
+            self._verify_depth_cache(data_mode, task_mode)
+            if preload_depth: self._preload_depth() # load depth to RAM
 
         ## open depth_map cache in multi-read mode for dataloaders
         ## bugs with this... 
         ## see https://discuss.pytorch.org/t/dataloader-when-num-worker-0-there-is-bug/25643/16
         self.depthmap_cachefile = None
     
+
     def __getitem__(self, index):
         ## the x-values are loaded 'on-the-fly' as and when required.
         ## this function is called internally by pytorch whenever a new sample needs to
@@ -203,16 +214,6 @@ class HandPoseActionDataset(Dataset):
         self.num_samples = \
             self.train_size if (self.data_mode == DatasetMode.TRAIN) \
                             else self.test_size
-        
-        
-        
-        ### skeleton ground truth ###
-        # this will be a list of variable sized 2D matrices (HAR) OR
-        # fixed sized vectors (HPE)
-        self.names = []
-        self.joints_world = []
-        self.coms_world = []
-        self.actions = []
         
 
 
@@ -304,7 +305,7 @@ class HandPoseActionDataset(Dataset):
         assert(len(self.coms_world) == self.num_samples)
         assert(len(self.actions) == self.num_samples)
 
-    def _load_depthmaps(self, data_mode_str, task_mode_str):
+    def _verify_depth_cache(self, data_mode_str, task_mode_str):
         '''
             In this function, the depthmaps are first searched via h5py cache file, 
             if found then nothing else is done as data will be loaded on the fly
@@ -350,7 +351,6 @@ class HandPoseActionDataset(Dataset):
         # because we are also stacking here
 
         with h5py.File(filepath, 'w', libver='latest') as f:
-            self.depthmaps = []
             ## note item is either a string or list type of paths
             ## depending on dataset mode
             if self.task_mode == TaskMode.HAR:
@@ -391,6 +391,19 @@ class HandPoseActionDataset(Dataset):
                     data_handle[i] = np.array(Image.open(item))
         self.depthmap_cachepath = filepath
 
+
+    def _preload_depth(self):
+        '''
+            Preload all depthmaps to main memory (RAM)
+        '''
+        with h5py.File(self.depthmap_cachepath, 'r', libver='latest') as f:
+            if self.task_mode == TaskMode.HAR:
+                for key,dataset in tqdm(f.items(),
+                                        desc='Preloading depthmaps to RAM',
+                                        total=len(f)):
+                    self.depthmaps.append(dataset)
+            elif self.task_mode == TaskMode.HPE:
+                self.depthmaps = f[self.num2str(0)] # the first dataset is entire dataset
 
     def _compute_dataset_size(self):
         '''
