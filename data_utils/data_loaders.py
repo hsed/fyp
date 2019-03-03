@@ -89,8 +89,9 @@ class DepthJointsDataLoader(BaseDataLoader):
         Use validation_split to extract some samples for validation
     '''
 
-    def __init__(self, data_dir, dataset_type, batch_size, shuffle, 
-                validation_split=0.0, num_workers=1, debug=False, reduce=False):
+    def __init__(self, data_dir, dataset_type, batch_size, shuffle, pca_components=30,
+                validation_split=0.0, num_workers=1, debug=False, reduce=False,
+                use_pca_cache=True, pca_overwrite_cache=False):
 
         t = time.time()
         #not needed atm as NLLloss needs only class idx
@@ -101,6 +102,7 @@ class DepthJointsDataLoader(BaseDataLoader):
             'cube_side_mm': 200,
             'debug_mode': debug
         }
+
         trnsfrm = transforms.Compose([
                                         JointReshaper(**trnsfrm_base_params),
                                         DepthCropper(**trnsfrm_base_params),
@@ -113,6 +115,9 @@ class DepthJointsDataLoader(BaseDataLoader):
                                             **trnsfrm_base_params),
                                         DepthStandardiser(**trnsfrm_base_params),
                                         JointCentererStandardiser(**trnsfrm_base_params),
+                                        PCATransformer(n_components=pca_components,
+                                                       use_cache=use_pca_cache,
+                                                       overwrite_cache=pca_overwrite_cache),
                                         ToTuple(extract_type='depth_joints')
                                     ])
         self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
@@ -132,6 +137,62 @@ class DepthJointsDataLoader(BaseDataLoader):
             print("Sample Joints_Std_MIN_MAX: ", test_sample[0].min(), test_sample[0].max())
 
 
+        ### before exiting ensure PCA is pre-computed (using cache on disk)
+        ### if not we need to compute
+        ### no reduce option here
+        self._check_pca(trnsfrm.transforms[-2], dataset_type)
+
+
+    def _check_pca(self, pca_transformer, dataset_type, aug_mode_lst,
+                   transform_base_params):
+        if transform_pca.transform_matrix_np is None:
+        # each sample is 1x21x3 so we use cat to make it 3997x21x3
+        # id we use stack it intriduces a new dim so 3997x1x21x3
+        # load all y_sample sin tprch array
+        # note only train subjects are loaded!
+        
+            trnsfrm = transforms.Compose([
+                                            JointReshaper(**trnsfrm_base_params),
+                                            JointsAugmenter( # TODO: implem
+                                                aug_mode_lst=[
+                                                    AugType.AUG_NONE,
+                                                    AugType.AUG_ROT,
+                                                    AugType.AUG_TRANS
+                                                ],
+                                                **trnsfrm_base_params),
+                                            JointCentererStandardiser(**trnsfrm_base_params),
+                                            ToTuple(extract_type='joints') # TODO: see if correct
+                                        ])
+
+            y_set = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
+                                        transform=trnsfrm, reduce=False)
+            
+            y_pca_len = int(2e5)
+            y_idx_pca = np.random.choice(len(y_set), y_pca_len, replace=True)
+            #print(y_idx_pca, y_idx_pca.shape)
+            #y_loader = torch.utils.data.DataLoader(y_set, batch_size=1, shuffle=True, num_workers=0)
+            print('==> Collating %d y_samples for PCA ..' % y_pca_len)
+            
+            fullYList = []
+            for (i, item) in enumerate(y_idx_pca):  #y_loader
+                fullYList.append(y_set[item])
+                progress_bar(i, y_pca_len) #y_loader
+            
+            y_train_samples = torch.from_numpy(np.stack(fullYList)) #tuple(y_loader) #torch.cat()
+            #print(fullList)
+            print("\nY_GT_STD SHAPE: ", y_train_samples.shape, 
+                    "Max: ", np.max(y_train_samples.numpy()), 
+                    "Min: ", np.min(y_train_samples.numpy()), "\n")
+            # in future just use fit command, fit_transform is just for testing
+            print('==> fitting PCA ..')
+            zz = transform_pca.fit_transform(y_train_samples)
+            print("PCA_Y_SHAPE: ", zz.shape, "MAX: ", zz.max(), "MIN: ", zz.min(), "\n")
+            print('==> PCA fitted ..')
+
+            del y_train_samples
+            del fullYList
+            #del y_loader
+            del y_set
 
 
 class PersistentDataLoader(object):
