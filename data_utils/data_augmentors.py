@@ -77,6 +77,66 @@ def comToBounds(com, crop_size_3D, fx, fy):
     
     return xstart, xend, ystart, yend, zstart, zend
 
+
+def comToBoundsV2(com, min_rel_mm_tuple, max_rel_mm_tuple, fx, fy):
+    """
+        Project com in px coord to 3D coord and then crop a 3D 'volume' region 
+        defined by crop_size_3D, with com at center and then backproject com to
+        px coord
+        `com` center of mass, in image coordinates (x,y,z), z in mm
+        `min_rel_mm_tuple` (x,y,z) neg extent of crop w.r.t com in mm
+        `max_rel_mm_tuple` (x,y,z) pos extent of crop w.r.t com in mm
+        `return` xstart, xend, ystart, yend, zstart, zend as px idx to crop
+
+        from deep-prior-pp
+    """
+    # TODO: change this function for FHAD, no Z thresholding
+    # and for region, project keypoints to px coords then extract
+    # rect boundary with 40px padding on top,bottom,left,right w.r.t the extremum
+    # coords (e.g. leftmost joint, topmost joint etc)
+    if np.isclose(com[2], 0.):
+        raise RuntimeError( "Error: CoM ill-defined! This is not implemented")
+
+    ## ensure absolute as we will manually do all subtraction addition
+    minx, miny, minz = (abs(a) for a in min_rel_mm_tuple)
+    maxx, maxy, maxz = (abs(a) for a in max_rel_mm_tuple)
+
+    zstart = com[2] - minz
+    zend = com[2] + maxz
+    xstart = int(np.floor((com[0] * com[2] / fx - minx) / com[2]*fx+0.5))
+    xend = int(np.floor((com[0] * com[2] / fx + maxx) / com[2]*fx+0.5))
+    ystart = int(np.floor((com[1] * com[2] / fy - miny) / com[2]*fy+0.5))
+    yend = int(np.floor((com[1] * com[2] / fy + maxy) / com[2]*fy+0.5))
+    
+    return xstart, xend, ystart, yend, zstart, zend
+
+def keyptsToBounds(keypt_px, crop_pad_px=40, depth_pad_mm=50.):
+    """
+        keypt_px_orig in px coords
+        `com` center of mass, in image coordinates (x,y,z), z in mm
+        `size` (x,y,z) extent of the source crop volume in mm
+        `return` xstart, xend, ystart, yend, zstart, zend as px idx to crop
+
+        from deep-prior-pp
+    """
+    # TODO: change this function for FHAD, no Z thresholding
+    # and for region, project keypoints to px coords then extract
+    # rect boundary with 40px padding on top,bottom,left,right w.r.t the extremum
+    # coords (e.g. leftmost joint, topmost joint etc)
+
+    xstart = int(keypt_px[:, 0].min() - crop_pad_px)
+    xend = int(keypt_px[:, 0].max() + crop_pad_px)
+
+    ystart = int(keypt_px[:, 1].min() - crop_pad_px)
+    yend = int(keypt_px[:, 1].max() + crop_pad_px)
+
+    ### NOTE: THIS IS VERY RISKY TODO: TEST!!
+    # Note this should be a float
+    zstart = min(0, keypt_px[:, 2].min() - depth_pad_mm)
+    zend = keypt_px[:, 2].max() + depth_pad_mm
+    
+    return xstart, xend, ystart, yend, zstart, zend
+
 def getCrop(dpt, xstart, xend, ystart, yend, zstart, zend, thresh_z=True, background=0):
     """
         Crop patch from image
@@ -143,6 +203,9 @@ def cropDepth2D(depth_img, com_px, fx, fy, crop3D_mm=(200, 200, 200), out2D_px =
     # calculate boundaries in pixels given com in pixel and crop volume in mm
     # conversion is done using principal axis / focal point
     xstart, xend, ystart, yend, zstart, zend = comToBounds(com_px, crop3D_mm, fx, fy)
+
+    # TODO: TEST THIS! NEW
+    #xstart, xend, ystart, yend, zstart, zend = keyptsToBounds(y)
     
     # crop patch from source
     # crops a 2D image using CoM bounds

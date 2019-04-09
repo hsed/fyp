@@ -26,7 +26,7 @@ from .base_data_types import BaseDataType as DT, \
 # --18(pinky_pip), 19(pinky_dip), 20(pinky_tip),
 # total 21 joints, each having 3D co-ords
 
-
+# COM, currently MCP --> 3*world_dim: 3*world_dim+3
 
 
 # def load_depthmap(filename, img_width, img_height, max_depth):
@@ -276,7 +276,7 @@ class HandPoseActionDataset(Dataset):
                     ).astype(np.float32)
                 )
 
-                # get gt middle_mcp world co-ords x,y,z of current sample
+                # get gt middle_mcp world co-ords x,y,z of current sample (last item appended)
                 self.coms_world.append(
                     self.joints_world[-1][:, 3*self.world_dim : 3*self.world_dim+3]
                 )

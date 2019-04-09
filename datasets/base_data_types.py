@@ -27,6 +27,8 @@ class TransformDataType(IntEnum):
 
         all these datatypes grow backwards
     '''
+    DEPTH_CROP_AUG = -11 # final result but without standardisation
+    DEPTH_CROP = -10
     AUG_PARAMS = -9
     AUG_MODE = -8
     AUG_TRANSF_MATX = -7
@@ -79,7 +81,18 @@ class FHADCameraIntrinsics(Enum):
     UY = 245.287079
 
 
+#@unique -- can't put this here as FX==FY
+class MSRACameraIntrinsics(Enum):
+    # Focal Length
+    FX = 241.42
+    FY = 241.42
+
+    # image center
+    UX = 160.0
+    UY = 120.0
+
+
 @unique
 class DepthParameters(Enum):
     OUT_PX=128
-    DPT_RANGE_MM=200
+    #DPT_RANGE_MM=200

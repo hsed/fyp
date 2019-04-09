@@ -9,7 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cmap
 
-from .dp_augment import *
+from .data_augmentors import *
+from datasets import ExtendedDataType as DT
 
 from sklearn.decomposition import PCA
 
@@ -18,7 +19,7 @@ from sklearn.decomposition import PCA
 
 '''
 
-
+ 
 def standardiseImg(depth_img, com_dpt_mm, crop_dpt_mm, extrema=(-1,1), copy_arr=False):
     # create a copy to prevent issues to original array
     if copy_arr:
@@ -245,14 +246,16 @@ class DeepPriorXYTransform(object):
         ## as x,y,z mm where center is center of image
 
         ### orig data loading ###
-        dpt_orig = sample['depthmap']
-        keypt_mm_orig = sample['joints']
-        com_mm_orig = sample['refpoint']
+        dpt_orig = sample[DT.DEPTH]
+        keypt_mm_orig = sample[DT.JOINTS]
+        com_mm_orig = sample[DT.COM]
 
         ## convert joints & CoM to img coords
         ## note this is right for original image but wrong for cropped pic
         keypt_px_orig = self.mm2pxMulti(keypt_mm_orig)
         com_px_orig = self.mm2px(com_mm_orig)
+
+        #print("FX, FY, crop3D_mm: ", com_px_orig)
 
         ### cropping + centering ###
         ## convert input image to cropped, centered and resized 2d img
@@ -306,8 +309,9 @@ class DeepPriorXYTransform(object):
         # return final x, y pair -- HOWEVER FOR TRAINING YOU NEED PCA VERSION OF OUTPUTS!!
         # no need to convert to torch as this is fine as numpy here
         # the dataloader class automatically gets a torch version.
-
-        return (dpt_final, keypt_final)
+        sample[DT.DEPTH] = dpt_final
+        sample[DT.JOINTS] = keypt_final
+        return sample#(dpt_final, keypt_final)
 
     
     ## from deep-prior
@@ -392,7 +396,11 @@ class DeepPriorXYTestTransform(DeepPriorXYTransform):
         super().__init__(*args, **kwargs) # initialise the super class
 
     def __call__(self, sample):
-        final_depth_img, _ = super().__call__(sample) # transform x, y as usual
+        sample = super().__call__(sample) # transform x, y as usual
+
+        ### only get transformed depth
+        final_dpt_img = sample[DT.DEPTH]
+        
         keypoints_gt_mm = sample['joints']  # get the actual y (untransformed)
         com_mm = sample['refpoint'] # neede to transform back output from model
 
@@ -415,8 +423,8 @@ class DeepPriorYTransform(DeepPriorXYTransform):
         super().__init__(*args, **kwargs) # initialise the super class
 
     def __call__(self, sample):
-        keypt_mm_orig = sample['joints']
-        com_mm_orig = sample['refpoint']
+        keypt_mm_orig = sample[DT.JOINTS]
+        com_mm_orig = sample[DT.COM]
 
         keypt_px_orig = self.mm2pxMulti(keypt_mm_orig)
         com_px_orig = self.mm2px(com_mm_orig)
@@ -447,8 +455,8 @@ class DeepPriorYTransform(DeepPriorXYTransform):
 
         keypt_mm_crop_aug = self.px2mmMulti(keypt_px_orig_aug) - self.px2mm(com_px_orig_aug)
 
-
-        return standardiseKeyPoints(keypt_mm_crop_aug, self.crop_vol_mm[2]).flatten()
+        sample[DT.JOINTS] = standardiseKeyPoints(keypt_mm_crop_aug, self.crop_vol_mm[2]).flatten()
+        return sample
 
 
 
@@ -651,7 +659,7 @@ class DeepPriorBatchResultCollector():
         gt_mm_nc_batch = gt_mm_nc_batch.cpu().numpy()
         com_batch = com_batch.cpu().numpy()
 
-        # an important transformer
+        # an important transformer: cropped_std -> mm_no_crop i.e. now w.r.t origin in euclidean space
         pred_mm_nc_batch = self.transform_output((pred_std_cen_batch, com_batch))
 
         #print("pred_mm_nc (min, max): (%0f, %0f)\t gt_mm_nc (min, max): (%0f, %0f)" % \

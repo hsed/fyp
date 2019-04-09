@@ -69,7 +69,8 @@ def unStandardiseKeyPointsCube(keypoints_std, cube_side_mm):
     return keypoints_std * (cube_side_mm / 2.)
 
 
-## from deep-prior
+# TODO: Do not enable unless bug is fixed or just never enable
+'''
 class Pixels2MM(object):
     """
         Converts a collection of (fractional) pixel indices (w.r.t an image
@@ -156,6 +157,77 @@ class MM2Pixel(object):
     
     def __call__(self, sample):
         return np.append(self.cam_intr.dot(sample)[:2] / sample[2], sample[2])
+'''
+
+
+## from deep-prior
+class DomainConverter(object):
+    def __init__(self, cam_intrinsics):
+        self.fx = cam_intrinsics.FX.value
+        self.fy = cam_intrinsics.FY.value
+        self.ux = cam_intrinsics.UX.value
+        self.uy = cam_intrinsics.UY.value
+    
+    def px2mmMulti(self, sample):
+        """
+            Converts a collection of pixel indices (w.r.t an image
+            with original dimensions (un-cropped)) to a collection of mm values
+            (w.r.t the original focal point i.e 0mm at focal point).
+            :param sample: row vectors in (x,y,z) with x,y in original image 
+            coordinates and z in mm
+            :return: {(x1,y1,z1), ..., (xN, yN, zN)} in mm 
+        """
+        ret = np.zeros((sample.shape[0], 3), dtype=np.float32)
+        for i in range(sample.shape[0]):
+            ret[i] = self.px2mm(sample[i])
+        return ret
+
+    def px2mm(self, sample):
+        """
+            Converts pixel indices (w.r.t an image
+            with original dimensions (un-cropped)) to mm values
+            (w.r.t the original focal point i.e 0mm at focal point).
+            :param sample: vector in (x,y,z) with x,y in original image 
+            coordinates and z in mm
+            :return: (x,y,z) in mm 
+        """
+        ret = np.zeros((3,), dtype=np.float32)
+        ret[0] = (sample[0] - self.ux) * sample[2] / self.fx
+        ret[1] = (self.uy - sample[1]) * sample[2] / self.fy
+        ret[2] = sample[2]
+        return ret
+    
+
+    def mm2pxMulti(self, sample):
+        """
+            Converts a collection of mm values (w.r.t the original focal point 
+            i.e 0mm at focal point) to a collection of indices with px values
+            (w.r.t an image of original dimensions (un-cropped)).
+            :param sample: row vectors in (x,y,z) with x,y in original image 
+            coordinates and z in mm
+            :return: {(x1,y1,z1), ..., (xN, yN, zN)} in mm 
+        """
+        ret = np.zeros((sample.shape[0], 3), dtype=np.float32)
+        for i in range(sample.shape[0]):
+            ret[i] = self.mm2px(sample[i])
+        return ret
+
+    def mm2px(self, sample):
+        """
+        Denormalize each joint/keypoint from metric 3D to image coordinates
+        :param sample: joints in (x,y,z) with x,y and z in mm
+        :return: joint in (x,y,z) with x,y in image coordinates and z in mm
+        """
+        ret = np.zeros((3, ), dtype=np.float32)
+        if sample[2] == 0.:
+            ret[0] = self.ux
+            ret[1] = self.uy
+            return ret
+        ret[0] = sample[0]/sample[2]*self.fx+self.ux
+        ret[1] = self.uy-sample[1]/sample[2]*self.fy
+        ret[2] = sample[2]
+        return ret
+
 
 
 class TransformerBase(object):
@@ -182,7 +254,7 @@ class TransformerBase(object):
         # output sz in px; only 1:1 ratio supported
         self.out_sz_px = (dep_params.OUT_PX.value, dep_params.OUT_PX.value)
 
-        self.dpt_range_mm = dep_params.DPT_RANGE_MM.value
+        #self.dpt_range_mm = dep_params.DPT_RANGE_MM.value #disabled
 
         self.debug_mode = debug_mode
 
@@ -194,6 +266,37 @@ class JointReshaper(TransformerBase):
     def __call__(self, sample):
         sample[DT.JOINTS] = \
             sample[DT.JOINTS].reshape(self.num_joints, self.world_dim)
+
+        return sample
+
+
+class JointCenterer(TransformerBase):
+    '''
+        
+        A simple transformer for centering joints w.r.t CoM point
+        For HPE, provides centered joints as one 2D matrix per sample
+
+        Only centering is performed, no standardisation!
+
+    '''
+    def __init__(self, flatten_shape=True, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+
+    def __call__(self, sample):
+        com = sample[DT.COM]
+        dpt_range = self.crop_shape3D_mm[2]
+
+        # only perform aug adjustments if aug actually happened
+        # if DT.AUG_MODE in sample:
+        #     if sample[DT.AUG_MODE] == AugType.AUG_TRANS:
+        #         # add augmentation offset
+        #         com = com + sample[DT.AUG_PARAMS]
+        #     if sample[DT.AUG_MODE] == AugType.AUG_SC:
+        #         # scale dpt_range accordingly
+        #         dpt_range = dpt_range*sample[DT.AUG_PARAMS]
+        
+        ## broadcasting is done automatically here -- centering: CoM is new origin in 3D space
+        sample[DT.JOINTS] = sample[DT.JOINTS] - sample[DT.COM] #com
 
         return sample
 
@@ -219,8 +322,10 @@ class JointCentererStandardiser(TransformerBase):
         Also performs standardisation to set values in range -> (-1,1)
 
     '''
-    def __init__(self, *args, **kwargs):
+    def __init__(self, flatten_shape=True, *args, **kwargs):
         super().__init__(*args, **kwargs) # initialise the super class
+
+        self.flatten_shape = flatten_shape
     
 
     def __call__(self, sample):
@@ -232,13 +337,13 @@ class JointCentererStandardiser(TransformerBase):
         dpt_range = self.crop_shape3D_mm[2]
 
         # only perform aug adjustments if aug actually happened
-        if DT.AUG_MODE in sample:
-            if sample[DT.AUG_MODE] == AugType.AUG_TRANS:
-                # add augmentation offset
-                com = com + sample[DT.AUG_PARAMS]
-            if sample[DT.AUG_MODE] == AugType.AUG_SC:
-                # scale dpt_range accordingly
-                dpt_range = dpt_range*sample[DT.AUG_PARAMS]
+        # if DT.AUG_MODE in sample:
+        #     if sample[DT.AUG_MODE] == AugType.AUG_TRANS:
+        #         # add augmentation offset
+        #         com = com + sample[DT.AUG_PARAMS]
+        #     if sample[DT.AUG_MODE] == AugType.AUG_SC:
+        #         # scale dpt_range accordingly
+        #         dpt_range = dpt_range*sample[DT.AUG_PARAMS]
         
         ## broadcasting is done automatically here -- centering: CoM is new origin in 3D space
         sample[DT.JOINTS] = sample[DT.JOINTS] - com
@@ -246,7 +351,8 @@ class JointCentererStandardiser(TransformerBase):
         ## standardisation -- values between -1 and 1
         sample[DT.JOINTS] = \
             standardiseKeyPointsCube(sample[DT.JOINTS], dpt_range)\
-                                     .reshape(self.num_joints*self.world_dim)
+                                     .reshape(self.num_joints*self.world_dim)\
+            if self.flatten_shape else standardiseKeyPointsCube(sample[DT.JOINTS], dpt_range)
 
         ### all other values returned as is
         return sample
@@ -356,8 +462,9 @@ class DepthCropper(TransformerBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs) # initialise the super class
         
-        self.mm2px_multi = MM2Pixels(cam_intrinsics=self.cam_intrinsics)
-        self.mm2px = MM2Pixel(cam_intrinsics=self.cam_intrinsics)
+        dc = DomainConverter(cam_intrinsics=self.cam_intrinsics)
+        self.mm2px_multi = dc.mm2pxMulti #MM2Pixels(cam_intrinsics=self.cam_intrinsics)
+        self.mm2px = dc.mm2px#MM2Pixel(cam_intrinsics=self.cam_intrinsics)
         #self.px2mm_multi = Pixels2MM(cam_intrinsics=self.cam_intrinsics)
 
     def __call__(self, sample):
@@ -373,6 +480,9 @@ class DepthCropper(TransformerBase):
         keypt_px_orig = self.mm2px_multi(keypt_mm_orig)
         com_px_orig = self.mm2px(com_mm_orig)
 
+        #print("COM_PX: ", com_px_orig, "COM_MM: ", com_mm_orig)
+        #print("keypt_px_orig[10]: ", keypt_px_orig[:10], "COM_MM: ", com_mm_orig, "\nFX: ", self.cam_intrinsics.FX.value, "FY:, ", self.cam_intrinsics.FY.value,
+        #      "UX: ", self.cam_intrinsics.UX.value, "UY: ", self.cam_intrinsics.UY.value)
 
         #print("KeyptShape: ", keypt_px_orig.shape, "Com_shape:", com_px_orig.shape)
         #print("KeyptVals:\n", keypt_px_orig[:3,:], "\nCom_val:", com_px_orig)
@@ -385,9 +495,7 @@ class DepthCropper(TransformerBase):
                                                 dpt_orig, com_px_orig,
                                                 fx=self.cam_intrinsics.FX.value,
                                                 fy=self.cam_intrinsics.FY.value,
-                                                crop3D_mm=(self.dpt_range_mm,
-                                                           self.dpt_range_mm,
-                                                           self.dpt_range_mm),
+                                                crop3D_mm=self.crop_shape3D_mm,
                                                 out2D_px=self.out_sz_px
                                                 )
         
@@ -451,11 +559,13 @@ class DepthAndJointsAugmenter(TransformerBase):
         self.fx = self.cam_intrinsics.FX.value
         self.fy = self.cam_intrinsics.FY.value
 
-        self.mm2px_multi = MM2Pixels(cam_intrinsics=self.cam_intrinsics)
-        self.mm2px = MM2Pixel(cam_intrinsics=self.cam_intrinsics)
+        dc = DomainConverter(cam_intrinsics=self.cam_intrinsics)
 
-        self.px2mm_multi = Pixels2MM(cam_intrinsics=self.cam_intrinsics)
-        self.px2mm = Pixel2MM(cam_intrinsics=self.cam_intrinsics)
+        self.mm2px_multi = dc.mm2pxMulti#MM2Pixels(cam_intrinsics=self.cam_intrinsics)
+        self.mm2px = dc.mm2px#MM2Pixel(cam_intrinsics=self.cam_intrinsics)
+
+        self.px2mm_multi = dc.px2mmMulti#Pixels2MM(cam_intrinsics=self.cam_intrinsics)
+        self.px2mm = dc.px2mm#Pixel2MM(cam_intrinsics=self.cam_intrinsics)
 
         self.rot_lim = abs_rot_lim_deg if abs_rot_lim_deg <=180 else 180
         self.sc_std = scale_std if scale_std <= 0.02 else 0.02
@@ -465,7 +575,7 @@ class DepthAndJointsAugmenter(TransformerBase):
         # temporary TODO: change this to how its done originally basically
         # project x,y keypoitn to image cords and draw 40px bounding box enclosing
         # image
-        self.crop_vol_mm = (self.dpt_range_mm, self.dpt_range_mm, self.dpt_range_mm)
+        self.crop_vol_mm = self.crop_shape3D_mm
     
 
     def __call__(self, sample):
@@ -512,6 +622,93 @@ class DepthAndJointsAugmenter(TransformerBase):
         sample[DT.DEPTH] = dpt_crop_aug
         sample[DT.JOINTS] = self.px2mm_multi(keypt_px_orig_aug) # keypt_mm_orig_aug
         sample[DT.COM] = self.px2mm(com_px_orig_aug) # com_mm_orig_aug
+        sample[DT.DEPTH_CROP_AUG] = dpt_crop_aug
+        sample[DT.DEPTH_CROP] = dpt_crop # extra for debugging help
+        sample[DT.AUG_TRANSF_MATX] = aug_transf_matx
+        sample[DT.AUG_MODE] = aug_mode
+        sample[DT.AUG_PARAMS] = aug_param
+
+        return sample
+
+class JointsAugmenter(TransformerBase):
+    '''
+        Perform Augmenting for keypoints ONLY
+
+        For Future use see how its implemented not so important atm 
+        Only mainly useful for HPE maybe this should only be for HPE
+
+        In:
+        keypt_px_orig
+        com_px_orig
+
+        Out:
+        keypt_px_orig_aug
+        com_px_orig_aug
+
+    '''
+    def __init__(self, scale_std=0.02, trans_std=5, abs_rot_lim_deg=180,
+                 aug_mode_lst = [AugType.AUG_NONE], **kwargs):
+        super().__init__(**kwargs)
+        self.fx = self.cam_intrinsics.FX.value
+        self.fy = self.cam_intrinsics.FY.value
+
+        dc = DomainConverter(cam_intrinsics=self.cam_intrinsics)
+
+        self.mm2px_multi = dc.mm2pxMulti#MM2Pixels(cam_intrinsics=self.cam_intrinsics)
+        self.mm2px = dc.mm2px#MM2Pixel(cam_intrinsics=self.cam_intrinsics)
+
+        self.px2mm_multi = dc.px2mmMulti#Pixels2MM(cam_intrinsics=self.cam_intrinsics)
+        self.px2mm = dc.px2mm#Pixel2MM(cam_intrinsics=self.cam_intrinsics)
+
+        self.rot_lim = abs_rot_lim_deg if abs_rot_lim_deg <=180 else 180
+        self.sc_std = scale_std if scale_std <= 0.02 else 0.02
+        self.tr_std = trans_std if trans_std <= 5 else 5
+        self.aug_mode_lst = aug_mode_lst
+
+        # temporary TODO: change this to how its done originally basically
+        # project x,y keypoitn to image cords and draw 40px bounding box enclosing
+        # image
+        self.crop_vol_mm = self.crop_shape3D_mm
+    
+
+    def __call__(self, sample):
+        com_px_orig = sample[DT.COM_ORIG_PX]
+        keypt_px_orig = sample[DT.JOINTS_ORIG_PX]
+        
+        ## extra datatypes
+        com_mm_orig = sample[DT.COM_ORIG_MM]
+        keypt_mm_orig = sample[DT.JOINTS_ORIG_MM]
+
+        _, crop_transf_matx = cropDepth2D(
+                                            None, com_px_orig,
+                                            fx=self.fx, fy=self.fy,
+                                            crop3D_mm=self.crop_vol_mm,
+                                            out2D_px=self.out_sz_px
+                                        )
+        
+        
+        aug_mode, aug_param = getAugModeParam(self.aug_mode_lst, self.rot_lim, 
+                                                self.sc_std, self.tr_std)
+        
+        (_, keypt_px_orig_aug, com_px_orig_aug, _) = \
+            rotateHand2D(None, keypt_px_orig, com_px_orig, aug_param) \
+            if aug_mode == AugType.AUG_ROT \
+            else translateHand2D(None, keypt_px_orig, com_px_orig, com_mm_orig, aug_param, 
+                                    self.fx, self.fy, crop_transf_matx, self.mm2px, self.crop_vol_mm) \
+            if aug_mode == AugType.AUG_TRANS \
+            else scaleHand2D(None, keypt_px_orig, com_px_orig, com_mm_orig, aug_param, 
+                                    self.fx, self.fy, crop_transf_matx,
+                                    self.mm2px, crop3D_mm=self.crop_vol_mm) \
+            if aug_mode == AugType.AUG_SC \
+            else (None, keypt_px_orig, com_px_orig, np.eye(3, dtype=np.float32))
+
+        ## the'centering part' is now done by another transform
+        #keypt_mm_crop_aug = self.px2mm_multi(keypt_px_orig_aug) - self.px2mm_multi(com_px_orig_aug)
+
+
+        # store mm_orig_aug as default value, now only standardisation is needed
+        sample[DT.JOINTS] = self.px2mm_multi(keypt_px_orig_aug) # keypt_mm_orig_aug
+        sample[DT.COM] = self.px2mm(com_px_orig_aug) # com_mm_orig_aug
         sample[DT.AUG_MODE] = aug_mode
         sample[DT.AUG_PARAMS] = aug_param
 
@@ -527,6 +724,8 @@ class DepthStandardiser(TransformerBase):
         -1 (nearest) -> +1 (furthest), all 0. values are assumed
         points at inf and are set to +1.
         For HPE, provides centered joints as one 2D matrix per sample
+
+        Also performs unsqueeze on 0th axis: (128, 128) -> (1,128,128)
     '''
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs) # initialise the super class
@@ -540,17 +739,17 @@ class DepthStandardiser(TransformerBase):
         # TODO: also when there is data aug of scale or translation this maybe
         # wrong as the cube depth is now changed or com z_val has changed
         
-        com_z = sample[DT.COM_ORIG_MM][2]
-        dpt_range = self.dpt_range_mm
+        com_z = sample[DT.COM][2] #sample[DT.COM_ORIG_MM][2]
+        dpt_range = self.crop_shape3D_mm[2]
         
         # only perform aug adjustments if aug actually happened
-        if DT.AUG_MODE in sample:
-            if sample[DT.AUG_MODE] == AugType.AUG_TRANS:
-                # add augmentation offset
-                com_z = com_z + sample[DT.AUG_PARAMS][2]
-            if sample[DT.AUG_MODE] == AugType.AUG_SC:
-                # scale dpt_range accordingly
-                dpt_range = dpt_range*sample[DT.AUG_PARAMS]
+        # if DT.AUG_MODE in sample:
+        #     if sample[DT.AUG_MODE] == AugType.AUG_TRANS:
+        #         # add augmentation offset
+        #         com_z = com_z + sample[DT.AUG_PARAMS][2]
+        #     if sample[DT.AUG_MODE] == AugType.AUG_SC:
+        #         # scale dpt_range accordingly
+        #         dpt_range = dpt_range*sample[DT.AUG_PARAMS]
 
         sample[DT.DEPTH] = \
             standardiseImg(sample[DT.DEPTH],
@@ -600,7 +799,6 @@ class PCATransformer(TransformerBase):
 
     def __call__(self, sample):
         '''
-            sample is tuple of 2 np.array (x,y)
             later make this a dictionary
             single y_data sample is 1D
         '''
@@ -612,7 +810,9 @@ class PCATransformer(TransformerBase):
         # automatically do broadcasting if needed, but in this case we will only have 1 sample
         # note our matrix is U.T
         # though y_data is 1D array matmul automatically handles that and reshape y to col vector
-        return (sample[0], np.matmul(self.transform_matrix_np, (sample[1] - self.mean_vect_np)))
+        sample[DT.JOINTS] = np.matmul(self.transform_matrix_np, (sample[DT.JOINTS] - self.mean_vect_np))
+
+        return sample
     
     
     def _load_cache(self):
@@ -637,6 +837,7 @@ class PCATransformer(TransformerBase):
 
             self.transform_matrix_np = shared_array
             self.mean_vect_np = shared_array2
+            print("Info: PCA loaded from cachefile %s." % cache_file)
         else:
             # handles both no file and no cache dir
             Warning("PCA cache file not found, a new one will be created after PCA calc.")
@@ -734,6 +935,7 @@ class ToTuple(object):
         '''
             ExtractType used internally
         '''
+        DEPTH_ORIG_JOINTS_ORIG_COM = 'depth_orig_com_orig_joints'
         JOINTS_SEQ = 'joints_seq'
         JOINTS_ACTION_SEQ = 'joints_action_seq'
         DEPTH_JOINTS_SEQ = 'depth_joints_seq'
@@ -742,6 +944,7 @@ class ToTuple(object):
         JOINTS_ACTION = 'joints_action'
         DEPTH_JOINTS = 'depth_joints'
         DEPTH_JOINTS_ACTION = 'depth_joints_action'
+        DEPTH_JOINTS_DEBUG = 'depth_joints_debug'
 
 
     def __init__(self, extract_type = 'joints_action_seq'):
@@ -774,6 +977,13 @@ class ToTuple(object):
                 if (self.extract_type == ToTuple.ET.JOINTS_ACTION) \
             else (sample[DT.DEPTH], sample[DT.JOINTS]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS) \
+            else (sample[DT.DEPTH_ORIG], sample[DT.DEPTH_CROP], sample[DT.JOINTS_ORIG_PX], \
+                  sample[DT.COM_ORIG_PX], sample[DT.CROP_TRANSF_MATX], \
+                  None, sample[DT.DEPTH_CROP_AUG], sample[DT.AUG_TRANSF_MATX], \
+                  sample[DT.AUG_MODE], sample[DT.AUG_PARAMS]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_DEBUG) \
             else (sample[DT.DEPTH], sample[DT.JOINTS], sample[DT.ACTION]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_ACTION) \
+            else (sample[DT.DEPTH], sample[DT.JOINTS_ORIG_MM], sample[DT.COM_ORIG_MM]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_ORIG_JOINTS_ORIG_COM) \
             else None
