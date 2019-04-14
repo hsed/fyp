@@ -377,25 +377,26 @@ def perspectiveTransformImg(dpt_crop, M, target_size, crop_sz_3D, zstart, zend,
 
         return warped
 
-def cropHand2D(dpt_orig, keypt_px_orig, com_px_orig, fx, fy,
-                crop3D_mm=(200, 200, 200),  out2D_px = (128, 128)):
-    '''
-        Returns depth, keypt & com all cropped & centered in 2D plane as px values
-        Also returns 2D affine transform matx.
+### function not in use
+# def cropHand2D(dpt_orig, keypt_px_orig, com_px_orig, fx, fy,
+#                 crop3D_mm=(200, 200, 200),  out2D_px = (128, 128)):
+#     '''
+#         Returns depth, keypt & com all cropped & centered in 2D plane as px values
+#         Also returns 2D affine transform matx.
 
-        This function is only useful to visually plot crops.
-        In reality we would just need cropDepth2D as the keypt&com coords
-        need for actual output have to be in mm and this is evaluated by
-        keypt_mm_crop = keypt_mm_orig - com_mm_orig
-    '''
+#         This function is only useful to visually plot crops.
+#         In reality we would just need cropDepth2D as the keypt&com coords
+#         need for actual output have to be in mm and this is evaluated by
+#         keypt_mm_crop = keypt_mm_orig - com_mm_orig
+#     '''
 
-    dpt_crop, crop_transf_matx = cropDepth2D(dpt_orig, com_px_orig, fx, fy, crop3D_mm, out2D_px)
+#     dpt_crop, crop_transf_matx = cropDepth2D(dpt_orig, com_px_orig, fx, fy, crop3D_mm, out2D_px)
 
-    # note after calling this z-value is always maintained
-    keypt_px_crop = affineTransform2D(crop_transf_matx, keypt_px_orig)
-    com_px_crop = affineTransform2D(crop_transf_matx, com_px_orig)
+#     # note after calling this z-value is always maintained
+#     keypt_px_crop = affineTransform2D(crop_transf_matx, keypt_px_orig)
+#     com_px_crop = affineTransform2D(crop_transf_matx, com_px_orig)
 
-    return dpt_crop, keypt_px_crop, com_px_crop, crop_transf_matx
+#     return dpt_crop, keypt_px_crop, com_px_crop, crop_transf_matx
 
 
 def rotateHand2D(dpt, keypt_px, com_px, rot,
