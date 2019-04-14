@@ -28,6 +28,8 @@ def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig,
     ax.plot(com_px_orig[0], com_px_orig[1], 'kx')
     ax.plot(keypt_px_orig[:,0], keypt_px_orig[:, 1], marker='.', linewidth=0, color='g') ## remove line...
     ax.set_title("Original")
+
+    visualize_joints_2d(ax, keypt_px_orig, joint_idxs=False)
     
     com_px_crop = affineTransform2D(crop_transf_matx, com_px_orig)
     keypt_px_crop = affineTransform2D(crop_transf_matx, keypt_px_orig)
@@ -37,6 +39,8 @@ def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig,
     ax2.plot(com_px_crop[0], com_px_crop[1], 'kx')
     ax2.plot(keypt_px_crop[:,0], keypt_px_crop[:,1], 'g.')
     ax2.set_title("Cropped")
+
+    visualize_joints_2d(ax2, keypt_px_crop, joint_idxs=False)
     
 
     if dpt_crop_aug is None or aug_transf_matx is None or aug_mode is None or aug_val is None:
@@ -85,3 +89,45 @@ def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig,
 
     plt.tight_layout()
     plt.show()
+
+
+
+
+def visualize_joints_2d(ax, joints, joint_idxs=True, links=None, alpha=1):
+    """Draw 2d skeleton on matplotlib axis"""
+    if links is None:
+        links = [(0, 1, 6, 7, 8), (0, 2, 9, 10, 11), (0, 3, 12, 13, 14),
+                 (0, 4, 15, 16, 17), (0, 5, 18, 19, 20)]
+    # Scatter hand joints on image
+    x = joints[:, 0]
+    y = joints[:, 1]
+    ax.scatter(x, y, 1, 'r')
+
+    # Add idx labels to joints
+    for row_idx, row in enumerate(joints):
+        if joint_idxs:
+            plt.annotate(str(row_idx), (row[0], row[1]))
+    _draw2djoints(ax, joints, links, alpha=alpha)
+
+
+def _draw2djoints(ax, annots, links, alpha=1):
+    """Draw segments, one color per link"""
+    colors = ['r', 'm', 'b', 'c', 'g']
+
+    for finger_idx, finger_links in enumerate(links):
+        for idx in range(len(finger_links) - 1):
+            _draw2dseg(
+                ax,
+                annots,
+                finger_links[idx],
+                finger_links[idx + 1],
+                c=colors[finger_idx],
+                alpha=alpha)
+
+
+def _draw2dseg(ax, annot, idx1, idx2, c='r', alpha=1):
+    """Draw segment of given color"""
+    ax.plot(
+        [annot[idx1, 0], annot[idx2, 0]], [annot[idx1, 1], annot[idx2, 1]],
+        c=c,
+        alpha=alpha)

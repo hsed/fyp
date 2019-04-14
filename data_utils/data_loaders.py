@@ -193,7 +193,8 @@ class DepthJointsDataLoader(BaseDataLoader):
                 use_pca_cache=True, pca_overwrite_cache=False, preload_depth=False,
                 use_msra=False, data_aug=None, pca_data_aug=None,
                 use_orig_transformers=False, use_orig_transformers_pca=False,
-                randomise_params=True, pca_size=int(2e5)):
+                randomise_params=True, crop_depth_ver=0, pca_size=int(2e5),
+                crop_pad_3d=[40, 40, 50.], cube_side_mm=190):
         '''
             preload depth is not really needed, pytorch is intelligent and after
             first epoch everything is preloaded i.e. shared memory is used for
@@ -201,10 +202,14 @@ class DepthJointsDataLoader(BaseDataLoader):
             even without preloading
         '''
 
+        if reduce:
+            num_workers = 0
+            print('[DATALOADER] In reduce mode, setting num_workers = 0')
+
         # force no new pca calc in test mode
         if dataset_type == 'test' and pca_overwrite_cache:
             pca_overwrite_cache = False
-            print("PCA Overwrite Cache and Test Type are mutually exclusive, a cache must have been written during train mode...")
+            print("[DATALOADER] PCA Overwrite Cache and Test Type are mutually exclusive, a cache must have been written during train mode...")
         
         if use_msra:
             print("WARNING: USING MSRA DATASET")
@@ -233,11 +238,13 @@ class DepthJointsDataLoader(BaseDataLoader):
         trnsfrm_base_params = {
             'num_joints': 21,
             'world_dim': 3,
-            'cube_side_mm': 400 if not use_msra else 190, #200,#220, #200,
-            'debug_mode': debug,
+            'cube_side_mm': cube_side_mm, #210 if not use_msra else 190, #200,#220, #200, #400 for fhad
             'cam_intrinsics': FHADCameraIntrinsics if not use_msra else MSRACameraIntrinsics,
             'dep_params': DepthParameters,
-            'aug_lims': Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180)
+            'aug_lims': Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180),
+            'crop_depth_ver': crop_depth_ver,
+            'crop_pad_3d': tuple(crop_pad_3d), # tuple required for transformers, but yaml loads as list by def
+            'debug_mode': debug,
         }
 
         # only for training

@@ -4,6 +4,8 @@ import cv2
 import torch
 import numpy as np
 
+from typing import Tuple
+
 '''
     Variable naming scheme:
     <keypt|com>_<px|mm>_<type1>_<type2>
@@ -52,6 +54,7 @@ def getAugModeParam(aug_mode_lst, rot_lim, sc_std, tr_std):
 
 def comToBounds(com, crop_size_3D, fx, fy):
     """
+        method = 0 --- original label
         Project com in px coord to 3D coord and then crop a 3D 'volume' region 
         defined by crop_size_3D, with com at center and then backproject com to
         px coord
@@ -78,14 +81,14 @@ def comToBounds(com, crop_size_3D, fx, fy):
     return xstart, xend, ystart, yend, zstart, zend
 
 
-def comToBoundsV2(com, min_rel_mm_tuple, max_rel_mm_tuple, fx, fy):
+def comToBoundsV2(com, keypt_cent_mm, crop_size_3D, fx, fy):
     """
+        method = 1
         Project com in px coord to 3D coord and then crop a 3D 'volume' region 
         defined by crop_size_3D, with com at center and then backproject com to
         px coord
         `com` center of mass, in image coordinates (x,y,z), z in mm
-        `min_rel_mm_tuple` (x,y,z) neg extent of crop w.r.t com in mm
-        `max_rel_mm_tuple` (x,y,z) pos extent of crop w.r.t com in mm
+        `size` (x,y,z) extent of the source crop volume in mm
         `return` xstart, xend, ystart, yend, zstart, zend as px idx to crop
 
         from deep-prior-pp
@@ -96,23 +99,37 @@ def comToBoundsV2(com, min_rel_mm_tuple, max_rel_mm_tuple, fx, fy):
     # coords (e.g. leftmost joint, topmost joint etc)
     if np.isclose(com[2], 0.):
         raise RuntimeError( "Error: CoM ill-defined! This is not implemented")
+    
+    max_x = np.max(np.abs(keypt_cent_mm[:,0]))
+    max_y = np.max(np.abs(keypt_cent_mm[:,1]))
 
-    ## ensure absolute as we will manually do all subtraction addition
-    minx, miny, minz = (abs(a) for a in min_rel_mm_tuple)
-    maxx, maxy, maxz = (abs(a) for a in max_rel_mm_tuple)
+    if max_x >= max_y:
+        max_y = max_x
+    else:
+        max_x = max_y
+    max_z = np.max(np.abs(keypt_cent_mm[:,2]))
 
-    zstart = com[2] - minz
-    zend = com[2] + maxz
-    xstart = int(np.floor((com[0] * com[2] / fx - minx) / com[2]*fx+0.5))
-    xend = int(np.floor((com[0] * com[2] / fx + maxx) / com[2]*fx+0.5))
-    ystart = int(np.floor((com[1] * com[2] / fy - miny) / com[2]*fy+0.5))
-    yend = int(np.floor((com[1] * com[2] / fy + maxy) / com[2]*fy+0.5))
+    max_x += 30
+    max_y += 30
+    max_z += 100.
+
+    crop_size_3D = (max_x*2, max_y*2, max_z*2)
+
+    zstart = com[2] - crop_size_3D[2] / 2.
+    zend = com[2] + crop_size_3D[2] / 2.
+    xstart = int(np.floor((com[0] * com[2] / fx - crop_size_3D[0] / 2.) / com[2]*fx+0.5))
+    xend = int(np.floor((com[0] * com[2] / fx + crop_size_3D[0] / 2.) / com[2]*fx+0.5))
+    ystart = int(np.floor((com[1] * com[2] / fy - crop_size_3D[1] / 2.) / com[2]*fy+0.5))
+    yend = int(np.floor((com[1] * com[2] / fy + crop_size_3D[1] / 2.) / com[2]*fy+0.5))
     
     return xstart, xend, ystart, yend, zstart, zend
 
-def keyptsToBounds(keypt_px, crop_pad_px=40, depth_pad_mm=50.):
+
+
+def keyptsToBounds(keypt_px, com_px, x_crop_pad_px=40, y_crop_pad_px=40, depth_pad_mm=50.):
     """
-        keypt_px_orig in px coords
+        method = 2
+        `keypt_px` orig keypts in px coords
         `com` center of mass, in image coordinates (x,y,z), z in mm
         `size` (x,y,z) extent of the source crop volume in mm
         `return` xstart, xend, ystart, yend, zstart, zend as px idx to crop
@@ -124,16 +141,71 @@ def keyptsToBounds(keypt_px, crop_pad_px=40, depth_pad_mm=50.):
     # rect boundary with 40px padding on top,bottom,left,right w.r.t the extremum
     # coords (e.g. leftmost joint, topmost joint etc)
 
-    xstart = int(keypt_px[:, 0].min() - crop_pad_px)
-    xend = int(keypt_px[:, 0].max() + crop_pad_px)
+    xstart = int(keypt_px[:, 0].min() - x_crop_pad_px)
+    xend = int(keypt_px[:, 0].max() + x_crop_pad_px)
 
-    ystart = int(keypt_px[:, 1].min() - crop_pad_px)
-    yend = int(keypt_px[:, 1].max() + crop_pad_px)
+    if np.abs(com_px[0] - xstart) > np.abs(xend - com_px[0]):
+        #print("xstart farther")
+        xend = int(com_px[0] + np.abs(com_px[0] - xstart))
+        xstart = int(xstart)
+    else:
+        #print("xend farther")
+        xstart = int(com_px[0] - np.abs(xend - com_px[0]))
+        xend = int(xend)
 
-    ### NOTE: THIS IS VERY RISKY TODO: TEST!!
+    ystart = int(keypt_px[:, 1].min() - y_crop_pad_px)
+    yend = int(keypt_px[:, 1].max() + y_crop_pad_px)
+
+    if np.abs(com_px[1] - ystart) > np.abs(yend - com_px[1]):
+        #print("ystart farther")
+        yend = int(com_px[1] + np.abs(com_px[1] - ystart))
+        ystart = int(ystart)
+    else:
+        #print("yend farther")
+        ystart = int(com_px[1] - np.abs(yend - com_px[1]))
+        yend = int(yend)
+
     # Note this should be a float
     zstart = min(0, keypt_px[:, 2].min() - depth_pad_mm)
     zend = keypt_px[:, 2].max() + depth_pad_mm
+
+    return xstart, xend, ystart, yend, zstart, zend
+
+def keyptsToBoundsV2(keypt_px, com_px, x_crop_pad_px=40, y_crop_pad_px=40, depth_pad_mm=50.):
+    """
+        method = 3
+        `keypt_px` orig keypts in px coords
+        `com` center of mass, in image coordinates (x,y,z), z in mm
+        `size` (x,y,z) extent of the source crop volume in mm
+        `return` xstart, xend, ystart, yend, zstart, zend as px idx to crop
+
+        from deep-prior-pp
+    """
+    # TODO: change this function for FHAD, no Z thresholding
+    # and for region, project keypoints to px coords then extract
+    # rect boundary with 40px padding on top,bottom,left,right w.r.t the extremum
+    # coords (e.g. leftmost joint, topmost joint etc)
+
+    px_diff = (keypt_px - com_px)
+
+
+    x_diff,y_diff,z_diff = np.abs(np.vstack((np.min(px_diff, axis=0), np.max(px_diff, axis=0)))).max(axis=0)
+
+    # x_diff = np.max([np.abs(np.min(px_diff[:, 0])), np.abs(np.max(px_diff[:, 0]))])
+    # y_diff = np.max([np.abs(np.min(px_diff[:, 1])), np.abs(np.max(px_diff[:, 1]))])
+    # z_diff = np.max([np.abs(np.min(px_diff[:, 2])), np.abs(np.max(px_diff[:, 2]))])
+
+    main_diff = np.max([x_diff, y_diff])
+
+    xstart = int(com_px[0] - main_diff - x_crop_pad_px) #(keypt_px[:, 0].min() - x_crop_pad_px)
+    xend = int(com_px[0] + main_diff + x_crop_pad_px) #(keypt_px[:, 0].max() + x_crop_pad_px)
+    ystart = int(com_px[1] - main_diff - y_crop_pad_px) #(keypt_px[:, 0].min() - x_crop_pad_px)
+    yend = int(com_px[1] + main_diff + y_crop_pad_px) #(keypt_px[:, 0].max() + x_crop_pad_px)
+
+
+    # Note this should be a float
+    zstart = int(com_px[2] - z_diff - depth_pad_mm) #min(0, keypt_px[:, 2].min() - depth_pad_mm)
+    zend = int(com_px[2] + z_diff + depth_pad_mm)
     
     return xstart, xend, ystart, yend, zstart, zend
 
@@ -158,14 +230,14 @@ def getCrop(dpt, xstart, xend, ystart, yend, zstart, zend, thresh_z=True, backgr
                                     abs(yend)-min(yend, dpt.shape[0])),
                                     (abs(xstart)-max(xstart, 0),
                                     abs(xend)-min(xend, dpt.shape[1]))), mode='constant', constant_values=background)
-    elif len(dpt.shape) == 3:
-        cropped = dpt[max(ystart, 0):min(yend, dpt.shape[0]), max(xstart, 0):min(xend, dpt.shape[1]), :].copy()
-        # add pixels that are out of the image in order to keep aspect ratio
-        cropped = np.pad(cropped, ((abs(ystart)-max(ystart, 0),
-                                    abs(yend)-min(yend, dpt.shape[0])),
-                                    (abs(xstart)-max(xstart, 0),
-                                    abs(xend)-min(xend, dpt.shape[1])),
-                                    (0, 0)), mode='constant', constant_values=background)
+    # elif len(dpt.shape) == 3:
+    #     cropped = dpt[max(ystart, 0):min(yend, dpt.shape[0]), max(xstart, 0):min(xend, dpt.shape[1]), :].copy()
+    #     # add pixels that are out of the image in order to keep aspect ratio
+    #     cropped = np.pad(cropped, ((abs(ystart)-max(ystart, 0),
+    #                                 abs(yend)-min(yend, dpt.shape[0])),
+    #                                 (abs(xstart)-max(xstart, 0),
+    #                                 abs(xend)-min(xend, dpt.shape[1])),
+    #                                 (0, 0)), mode='constant', constant_values=background)
     else:
         raise NotImplementedError()
 
@@ -188,21 +260,35 @@ def resizeCrop(crop, sz, interpol_method=cv2.INTER_NEAREST):
     rz = cv2.resize(crop, sz, interpolation=interpol_method)
     return rz
 
-def cropDepth2D(depth_img, com_px, fx, fy, crop3D_mm=(200, 200, 200), out2D_px = (128, 128)):
+def cropDepth2D(depth_img, keypt_px, com_px, keypt_cent_mm, fx, fy, crop3D_mm=(200, 200, 200), out2D_px = (128, 128),
+                crop_ver=0, crop_pad:Tuple[int, int, float]=(40, 40, 50.)):
     """
         from deep-prior
         Crop area of hand in 3D volumina, scales inverse to the distance of hand to camera
         :param com: center of mass, in image coordinates (x,y,z), z in mm
         :param crop_size_3D: (x,y,z) extent of the source crop volume in mm
         :param out_size_2D: (x,y) extent of the destination size in pixels
+
+        `crop_pad`: x,y px padding (int) and z mm padding (float)
+
         :return: cropped hand image, transformation matrix for joints, CoM in image coordinates
 
         If depth_image is None then only return transformation matrix, useful for y_transform
     """
 
+    # if cropver 0 ignore keypt px
     # calculate boundaries in pixels given com in pixel and crop volume in mm
     # conversion is done using principal axis / focal point
-    xstart, xend, ystart, yend, zstart, zend = comToBounds(com_px, crop3D_mm, fx, fy)
+    if crop_ver == 0:
+        xstart, xend, ystart, yend, zstart, zend = comToBounds(com_px, crop3D_mm, fx, fy)
+    elif crop_ver == 1:
+        xstart, xend, ystart, yend, zstart, zend = comToBoundsV2(com_px, keypt_cent_mm, crop3D_mm, fx, fy)
+    elif crop_ver == 2:
+        xstart, xend, ystart, yend, zstart, zend = \
+            keyptsToBounds(keypt_px, com_px, x_crop_pad_px=crop_pad[0], y_crop_pad_px=crop_pad[1], depth_pad_mm=crop_pad[2])
+    elif crop_ver == 3:
+        xstart, xend, ystart, yend, zstart, zend = \
+            keyptsToBoundsV2(keypt_px, com_px, x_crop_pad_px=crop_pad[0], y_crop_pad_px=crop_pad[1], depth_pad_mm=crop_pad[2])
 
     # TODO: TEST THIS! NEW
     #xstart, xend, ystart, yend, zstart, zend = keyptsToBounds(y)
@@ -277,11 +363,13 @@ def get2DTransformMatx(xstart, xend, ystart, yend, out_size_2D):
         scale[2, 2] = 1
 
         # usually 0 if out_sz_2D[0] == out_sz_2D[1]
-        xstart_new = int(np.floor(out_size_2D[0] / 2. - sz[1] / 2.))
-        ystart_new = int(np.floor(out_size_2D[1] / 2. - sz[0] / 2.))
+        # TODO: Revisit and ensure its ok to keep this off, see visual difference by running debug mode train
+        #xstart_new = int(np.floor(out_size_2D[0] / 2. - sz[1] / 2.))
+        #ystart_new = int(np.floor(out_size_2D[1] / 2. - sz[0] / 2.))
+        #print("OFFSET: ", xstart_new, ystart_new)
         off = np.eye(3)
-        off[0, 2] = xstart_new
-        off[1, 2] = ystart_new
+        #off[0, 2] = xstart_new #GOOD FOR MSRA BAD FOR FHAD OK IF YOU DONT USE METH 2 w/ MSRA only 0,1,3
+        #off[1, 2] = ystart_new
 
         return np.array(np.dot(off, np.dot(scale, trans)), dtype=np.float32)
 

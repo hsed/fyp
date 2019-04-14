@@ -15,7 +15,7 @@ from .base_data_types import ExtendedDataType as DT, \
                              BaseDatasetType as DatasetMode, \
                              BaseTaskType as TaskMode
 
-#### TO HEAVILY EDIT TO SUPPORT HAND ACTION DATASET
+
 ## starting from 0, each component of y_gt_mm_keypoints is
 # --0(wrist)
 # --1(thumb_mcp), 2(index_mcp), 3(middle_mcp), 4(ring_mcp), 5(pinky_mcp)
@@ -27,31 +27,6 @@ from .base_data_types import ExtendedDataType as DT, \
 # total 21 joints, each having 3D co-ords
 
 # COM, currently MCP --> 3*world_dim: 3*world_dim+3
-
-
-# def load_depthmap(filename, img_width, img_height, max_depth):
-#     '''
-#         Given a bin file for one sample e.g. 000000_depth.bin
-#         Load the depthmap
-#         Load the gt bounding box countaining sample hand
-#         Clean the image by:
-#             - setting depth_values within bounding box as actual
-#             - setting all other depth_values to MAX_DEPTH
-#         I.e. all other stuff is deleted
-        
-#     '''
-#     with open(filename, mode='rb') as f:
-        
-        
-        
-#         ## be careful here thats not the way of deep_prior
-#         ### thus we have commented this line!
-#         #depth_image[depth_image == 0] = max_depth 
-#         ## in deep_prior max_depth is kept at 0 and only changed in the end.
-
-#         ## plot here to see how it looks like
-
-#         return depth_image
 
 
 
@@ -87,24 +62,13 @@ class HandPoseActionDataset(Dataset):
         self.min_depth = 100
         self.max_depth = 700
         
-        self.fx_d = 475.065948
-        self.fy_d = 475.065857
-
-        self.px_d = 315.944855   # aka u0_d
-        self.py_d = 245.287079   # aka v0_d
-
-        # depth intrinsic transform matrix
-        self.cam_intr_d = np.array([[self.fx_d, 0, self.px_d],
-                                    [0, self.fy_d, self.py_d], 
-                                    [0, 0, 1]])
-        
         self.joint_num = 21
         self.world_dim = 3
         
-        self.reorder_idx = np.array([
-            0, 1, 6, 7, 8, 2, 9, 10, 11, 3, 12,
-            13, 14, 4, 15, 16, 17, 5, 18, 19, 20
-        ])
+        # self.reorder_idx = np.array([
+        #     0, 1, 6, 7, 8, 2, 9, 10, 11, 3, 12,
+        #     13, 14, 4, 15, 16, 17, 5, 18, 19, 20
+        # ])
         
         self.test_pos = -1
         
@@ -114,7 +78,7 @@ class HandPoseActionDataset(Dataset):
         self.root = root
         self.skeleton_dir = os.path.join(self.root, 'Hand_pose_annotation_v1')
         self.video_dir = os.path.join(self.root, 'Video_files') 
-        self.info_dir = os.path.join(self.root, 'Subjects_info')
+        #self.info_dir = os.path.join(self.root, 'Subjects_info')
         self.subj_dirnames = ['Subject_1'] if reduce else \
             ['Subject_%d' % i for i in range(1, 7)]
         #self.center_dir = center_dir # not in use
@@ -132,8 +96,7 @@ class HandPoseActionDataset(Dataset):
         self.task_mode = TaskMode._value2member_map_[task_mode]
 
         self.transform = transform
-        #self.use_refined_com = use_refined_com not in use
-
+        
         # currently a very weak check, only checks for skeletons
         if not self._check_exists(): raise RuntimeError('Invalid Hand Pose Action Dataset')
 

@@ -263,7 +263,7 @@ class DeepPriorXYTransform(object):
         ## convert to 128x128 for network
         ## px_transform_matx for 2D transform of keypoints in px values
         dpt_crop, crop_transf_matx = cropDepth2D(
-                                                dpt_orig, com_px_orig,
+                                                dpt_orig, keypt_px_orig, com_px_orig,
                                                 fx=self.fx, fy=self.fy,
                                                 crop3D_mm=self.crop_vol_mm,
                                                 out2D_px=self.out_sz_px

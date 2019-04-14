@@ -12,7 +12,8 @@ import numpy as np
 
 from .data_augmentors import *
 from datasets import ExtendedDataType as DT, FHADCameraIntrinsics as CAM, \
-                             DepthParameters as DepParam
+                             DepthParameters as DepParam, \
+                             MSRACameraIntrinsics as CAM2
 
 from .debug_plot import plotImg
 
@@ -164,12 +165,45 @@ class MM2Pixel(object):
 ## from deep-prior
 class DomainConverter(object):
     def __init__(self, cam_intrinsics):
+        # for use with msra
         self.fx = cam_intrinsics.FX.value
         self.fy = cam_intrinsics.FY.value
         self.ux = cam_intrinsics.UX.value
         self.uy = cam_intrinsics.UY.value
+
+        # for use with fhad
+        self.cam_intr = np.array([[cam_intrinsics.FX.value, 0, cam_intrinsics.UX.value],
+                    [0, cam_intrinsics.FY.value, cam_intrinsics.UY.value], [0, 0, 1]])
+        self.inv_cam_intr = np.linalg.inv(self.cam_intr)
+        
+        #USE_FHAD_CONV = False if cam_intrinsics.__name__ != 'FHADCameraIntrinsics' else True
+
+        ## now only using fhad converters with msra fixed y-val!
+        self.px2mmMulti = self._px2mmMultiFHAD
+        self.px2mm = self._px2mmFHAD
+        self.mm2pxMulti = self._mm2pxMultiFHAD
+        self.mm2px = self._mm2pxFHAD
+        
+        # if USE_FHAD_CONV:
+        #     ### use FHAD converter functions...
+        #     print('[DOMAINCONV] Using FHAD Converters')
+        #     self.px2mmMulti = self._px2mmMultiFHAD
+        #     self.px2mm = self._px2mmFHAD
+        #     self.mm2pxMulti = self._mm2pxMultiFHAD
+        #     self.mm2px = self._mm2pxFHAD
+        # else:
+        #     ## use MSRA cam intrinsics
+        #     print('[DOMAINCONV] Using MSRA Converters')
+        #     self.px2mmMulti = self._px2mmMultiMSRA
+        #     self.px2mm = self._px2mmMSRA
+        #     self.mm2pxMulti = self._mm2pxMultiMSRA
+        #     self.mm2px = self._mm2pxMSRA  
+        # # else:
+        # #     raise NotImplementedError("Type %a of cam_intrinsics have unimplemented converters" % type(cam_intrinsics))
+
+
     
-    def px2mmMulti(self, sample):
+    def _px2mmMultiMSRA(self, sample):
         """
             Converts a collection of pixel indices (w.r.t an image
             with original dimensions (un-cropped)) to a collection of mm values
@@ -183,7 +217,7 @@ class DomainConverter(object):
             ret[i] = self.px2mm(sample[i])
         return ret
 
-    def px2mm(self, sample):
+    def _px2mmMSRA(self, sample):
         """
             Converts pixel indices (w.r.t an image
             with original dimensions (un-cropped)) to mm values
@@ -197,9 +231,8 @@ class DomainConverter(object):
         ret[1] = (self.uy - sample[1]) * sample[2] / self.fy
         ret[2] = sample[2]
         return ret
-    
 
-    def mm2pxMulti(self, sample):
+    def _mm2pxMultiMSRA(self, sample):
         """
             Converts a collection of mm values (w.r.t the original focal point 
             i.e 0mm at focal point) to a collection of indices with px values
@@ -213,7 +246,7 @@ class DomainConverter(object):
             ret[i] = self.mm2px(sample[i])
         return ret
 
-    def mm2px(self, sample):
+    def _mm2pxMSRA(self, sample):
         """
         Denormalize each joint/keypoint from metric 3D to image coordinates
         :param sample: joints in (x,y,z) with x,y and z in mm
@@ -230,6 +263,20 @@ class DomainConverter(object):
         return ret
 
 
+    def _px2mmMultiFHAD(self, sample):
+        return \
+            self.inv_cam_intr\
+                .dot(np.column_stack((sample[:,:2]*sample[:, 2:], sample[:, 2:])).T).T
+    
+    def _px2mmFHAD(self, sample):
+        return self.inv_cam_intr.dot(np.append(sample[:2]*sample[2], sample[2]))
+    
+    def _mm2pxMultiFHAD(self, sample):
+        return np.column_stack(((self.cam_intr.dot(sample.T).T[:, :2] / sample[:, 2:]),
+                              sample[:, 2]))
+    
+    def _mm2pxFHAD(self, sample):
+        return np.append(self.cam_intr.dot(sample)[:2] / sample[2], sample[2])
 
 class TransformerBase(object):
     '''
@@ -241,7 +288,8 @@ class TransformerBase(object):
 
     def __init__(self, num_joints = 21, world_dim = 3, cube_side_mm = 200,
                  cam_intrinsics = CAM, dep_params = DepParam, 
-                 aug_lims=Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180), debug_mode=False):
+                 aug_lims=Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180), 
+                 crop_depth_ver=0, crop_pad_3d:Tuple[int,int,float] = (40,40,50.), debug_mode=False):
         self.num_joints = num_joints
         self.world_dim = world_dim
 
@@ -257,6 +305,10 @@ class TransformerBase(object):
         #self.dpt_range_mm = dep_params.DPT_RANGE_MM.value #disabled
 
         self.aug_lims = aug_lims
+
+        self.crop_depth_ver = crop_depth_ver
+
+        self.crop_pad_3d = crop_pad_3d
 
         self.debug_mode = debug_mode
 
@@ -469,6 +521,12 @@ class DepthCropper(TransformerBase):
         self.mm2px = dc.mm2px#MM2Pixel(cam_intrinsics=self.cam_intrinsics)
         #self.px2mm_multi = Pixels2MM(cam_intrinsics=self.cam_intrinsics)
 
+        if self.crop_depth_ver > 0:
+            print('[DEPTHCROPPER] Using ver.%d depth cropping' % self.crop_depth_ver)
+        
+        #assert (self.crop_depth_ver == 0 or self.crop_depth_ver == 2), "Only v0 and v2 cropping is supported"
+
+
     def __call__(self, sample):
         
         ### orig data loading ###
@@ -493,14 +551,18 @@ class DepthCropper(TransformerBase):
         ## required CoM in px value
         ## convert to 128x128 for network
         ## px_transform_matx for 2D transform of keypoints in px values
+        keypt_mm_crop = keypt_mm_orig - com_mm_orig
+
         dpt_crop, crop_transf_matx = cropDepth2D(
-                                                dpt_orig, com_px_orig,
+                                                dpt_orig, keypt_px_orig, com_px_orig, keypt_mm_crop,
                                                 fx=self.cam_intrinsics.FX.value,
                                                 fy=self.cam_intrinsics.FY.value,
                                                 crop3D_mm=self.crop_shape3D_mm,
-                                                out2D_px=self.out_sz_px
+                                                out2D_px=self.out_sz_px,
+                                                crop_ver=self.crop_depth_ver,
+                                                crop_pad=self.crop_pad_3d,
                                                 )
-        
+
         #if self.debug_mode:
             #plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, crop_transf_matx)
             #quit()
