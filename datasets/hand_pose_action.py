@@ -11,7 +11,7 @@ from PIL import Image
 from tqdm import tqdm
 from torch.utils.data import Dataset
 
-from .base_data_types import BaseDataType as DT, \
+from .base_data_types import ExtendedDataType as DT, \
                              BaseDatasetType as DatasetMode, \
                              BaseTaskType as TaskMode
 
@@ -203,7 +203,9 @@ class HandPoseActionDataset(Dataset):
                           else self.depthmap_cachefile[self.num2str(0)][index] \
                           if self.preload_depth is False \
                           else self.depthmaps[index], #depthmap => R^{480 x 640}
-                DT.ACTION: self.actions[index] # action => R^{1}
+                DT.ACTION: self.actions[index], # action => R^{1}
+                DT.AUG_MODE: None, # if self.aug_modes is None else self.aug_modes[index],
+                DT.AUG_PARAMS: None, # if self.aug_params is None else self.aug_params[index]
             }
 
         #print("SHAPE::: ", sample[DT.DEPTH_SEQ].shape, "DTYPE::: ", sample[DT.DEPTH_SEQ].dtype)

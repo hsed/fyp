@@ -3,7 +3,8 @@ import torch
 from torchvision.utils import make_grid
 from trainer import BaseTrainer
 from data_utils import PersistentDataLoader
-
+from metrics import Avg3DError
+from models import PCADecoderBlock
 from tqdm import tqdm
 
 class Trainer(BaseTrainer):
@@ -21,10 +22,42 @@ class Trainer(BaseTrainer):
         self.data_loader = PersistentDataLoader(data_loader, load_on_init=True) \
                                                 if config['trainer']['persistent_storage'] else data_loader
         self.valid_data_loader = PersistentDataLoader(valid_data_loader, load_on_init=True) \
-                                                if config['trainer']['persistent_storage'] else data_loader
+                                                if config['trainer']['persistent_storage'] else valid_data_loader
         self.do_validation = self.valid_data_loader is not None
         self.lr_scheduler = lr_scheduler
         self.log_step = 1#int(np.sqrt(data_loader.batch_size))
+
+                ## special case for HPE
+        if Avg3DError in self.metrics:
+            idx = metrics.index(Avg3DError)
+            '''
+                This special metric requires a PCA decoder class with correct
+                parameters i.e. weight and bias matx pre-learnt during PCA training.
+
+                Currently, the implementation is such that the dataloader class for HPE
+                loads PCA and saves weights and biases, now these are automatically
+                initialised and can be accessed from the dataloader class.
+
+                Note: PCA is always learnt on training data with likely data augmentation
+
+                We replace the uninitialised reference with the initialised one here.
+
+            '''
+            ### init metric classes for future use
+            avg_3d_err_metric = Avg3DError(cube_side_mm=self.data_loader.params['cube_side_mm'],
+                                                        ret_avg_err_per_joint=False)
+            
+            avg_3d_err_metric.pca_decoder = \
+                PCADecoderBlock(num_joints=self.data_loader.params['num_joints'],
+                                num_dims=self.data_loader.params['world_dim'],
+                                pca_components=self.data_loader.params['pca_components'])
+            
+            ## weights are init as transposed of given
+            avg_3d_err_metric.pca_decoder.initialize_weights(weight_np=self.data_loader.pca_weights_np,
+                                                                bias_np=self.data_loader.pca_bias_np)
+            avg_3d_err_metric.pca_decoder= avg_3d_err_metric.pca_decoder.to(self.device, self.dtype)
+            
+            metrics[idx] = avg_3d_err_metric
 
     def _eval_metrics(self, output, target):
         acc_metrics = np.zeros(len(self.metrics))
@@ -92,12 +125,13 @@ class Trainer(BaseTrainer):
                     #     loss.item()))
                     #({:.0f}%)
                     tqdm_pbar.update(self.log_step)
-                    tqdm_pbar.set_description('Train Epoch: {} [{}/{}] Loss: {:.6f}'.format(
+                    tqdm_pbar.set_description('Train [Epoch: {}/{}] [Sample: {}/{}] [Loss: {:.4f}]'.format(
                         epoch,
+                        self.epochs,
                         batch_idx * self.data_loader.batch_size,
-                        self.data_loader.n_samples,
-                        #100.0 * batch_idx / len(self.data_loader),
-                        loss.item()))
+                        self.data_loader.n_samples, ##100.0 * batch_idx / len(self.data_loader),
+                        loss.item())
+                    )
                     #self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
                 
                 #break # return after one batch
@@ -116,13 +150,6 @@ class Trainer(BaseTrainer):
             self.writer.add_scalar(f'{metric.__name__}', metric_val)
         
 
-        if self.do_validation:
-            val_log = self._valid_epoch(epoch)
-            log = {**log, **val_log}
-
-        if self.lr_scheduler is not None:
-            self.lr_scheduler.step()
-
         return log
 
     def _valid_epoch(self, epoch):
@@ -138,7 +165,9 @@ class Trainer(BaseTrainer):
         total_val_loss = 0
         total_val_metrics = np.zeros(len(self.metrics))
         with torch.no_grad():
-            for batch_idx, (data, target) in enumerate(self.valid_data_loader):
+            for batch_idx, (data, target) in \
+                tqdm(enumerate(self.valid_data_loader), desc='Validate', total=len(self.valid_data_loader)):
+                
                 target = target.to(self.device, self.target_dtype)
 
                 self.optimizer.zero_grad()

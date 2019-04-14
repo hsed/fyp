@@ -4,6 +4,7 @@ import multiprocessing
 import ctypes
 
 from enum import IntEnum, Enum
+from argparse import Namespace
 
 import cv2
 import torch
@@ -239,7 +240,8 @@ class TransformerBase(object):
 
 
     def __init__(self, num_joints = 21, world_dim = 3, cube_side_mm = 200,
-                 cam_intrinsics = CAM, dep_params = DepParam, debug_mode=False):
+                 cam_intrinsics = CAM, dep_params = DepParam, 
+                 aug_lims=Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180), debug_mode=False):
         self.num_joints = num_joints
         self.world_dim = world_dim
 
@@ -249,12 +251,12 @@ class TransformerBase(object):
         #intrinsic camera params
         self.cam_intrinsics = cam_intrinsics
 
-
-
         # output sz in px; only 1:1 ratio supported
         self.out_sz_px = (dep_params.OUT_PX.value, dep_params.OUT_PX.value)
 
         #self.dpt_range_mm = dep_params.DPT_RANGE_MM.value #disabled
+
+        self.aug_lims = aug_lims
 
         self.debug_mode = debug_mode
 
@@ -283,8 +285,8 @@ class JointCenterer(TransformerBase):
         super().__init__(*args, **kwargs) # initialise the super class
 
     def __call__(self, sample):
-        com = sample[DT.COM]
-        dpt_range = self.crop_shape3D_mm[2]
+        #com = sample[DT.COM]
+        #dpt_range = self.crop_shape3D_mm[2]
 
         # only perform aug adjustments if aug actually happened
         # if DT.AUG_MODE in sample:
@@ -553,8 +555,7 @@ class DepthAndJointsAugmenter(TransformerBase):
 
         Centering is done in end using these last values
     '''
-    def __init__(self, scale_std=0.02, trans_std=5, abs_rot_lim_deg=180,
-                 aug_mode_lst = [AugType.AUG_NONE], **kwargs):
+    def __init__(self, aug_mode_lst = [AugType.AUG_NONE], **kwargs):
         super().__init__(**kwargs)
         self.fx = self.cam_intrinsics.FX.value
         self.fy = self.cam_intrinsics.FY.value
@@ -567,15 +568,17 @@ class DepthAndJointsAugmenter(TransformerBase):
         self.px2mm_multi = dc.px2mmMulti#Pixels2MM(cam_intrinsics=self.cam_intrinsics)
         self.px2mm = dc.px2mm#Pixel2MM(cam_intrinsics=self.cam_intrinsics)
 
-        self.rot_lim = abs_rot_lim_deg if abs_rot_lim_deg <=180 else 180
-        self.sc_std = scale_std if scale_std <= 0.02 else 0.02
-        self.tr_std = trans_std if trans_std <= 5 else 5
+        self.rot_lim = self.aug_lims.abs_rot_lim_deg #if self.aug_lims.abs_rot_lim_deg <=180 else 180
+        self.sc_std = self.aug_lims.scale_std #if scale_std <= 0.02 else 0.02
+        self.tr_std = self.aug_lims.trans_std #if trans_std <= 5 else 5
         self.aug_mode_lst = aug_mode_lst
 
         # temporary TODO: change this to how its done originally basically
         # project x,y keypoitn to image cords and draw 40px bounding box enclosing
         # image
         self.crop_vol_mm = self.crop_shape3D_mm
+
+        print('[DEPTH&JOINTAUG] Crop_Shape:', self.crop_shape3D_mm )
     
 
     def __call__(self, sample):
@@ -593,7 +596,9 @@ class DepthAndJointsAugmenter(TransformerBase):
         
         
         aug_mode, aug_param = getAugModeParam(self.aug_mode_lst, self.rot_lim, 
-                                                self.sc_std, self.tr_std)
+                                                self.sc_std, self.tr_std) \
+                                                    if (sample[DT.AUG_MODE] is None or sample[DT.AUG_PARAMS] is None) else \
+                                                        sample[DT.AUG_MODE], sample[DT.AUG_PARAMS]
         
         (dpt_crop_aug, keypt_px_orig_aug, com_px_orig_aug, aug_transf_matx) = \
             rotateHand2D(dpt_crop, keypt_px_orig, com_px_orig, aug_param) \

@@ -3,7 +3,7 @@ import time
 from torchvision import transforms
 
 from data_utils import JointsActionDataLoader, CollateJointsSeqBatch, DepthJointsDataLoader,\
-                       PersistentDataLoader
+                       PersistentDataLoader, AugType
 
 from models import BaselineHARModel, DeepPriorPPModel
 
@@ -48,9 +48,23 @@ def debug():
                                                 debug=False,
                                                 reduce=True,
                                                 use_pca_cache=True,
-                                                pca_overwrite_cache=True,#False,
+                                                pca_overwrite_cache=False,#True,#False,
+                                                use_msra=True,
+                                                data_aug=[AugType.AUG_ROT]
                                             )
         
+        hpe_test_loader = DepthJointsDataLoader(
+                                                data_dir='datasets/hand_pose_action',
+                                                dataset_type='test',
+                                                batch_size=4,
+                                                shuffle=False,
+                                                validation_split=0.0,
+                                                num_workers=0,# debugging
+                                                debug=False,
+                                                reduce=True,
+                                                use_pca_cache=True,
+                                                pca_overwrite_cache=True,#False,
+                                            )
         
         
         #print("\n[%s] Model Summary: " % elapsed())
@@ -77,6 +91,8 @@ def debug():
         
         tmp_item = None
         max_num_batches = 2#99999
+
+        tst = hpe_train_loader.dataset[0]
         
         with tqdm(total=len(hpe_train_loader), desc="Loading max %d batches for HPE" % max_num_batches) \
             as tqdm_pbar:
@@ -90,12 +106,29 @@ def debug():
         print("HPE Data Loading Took: %0.2fs\n" % (time.time() - t) )
 
         
-        # with tqdm(total=len(persistent_data_loader), desc="Reloading max %d batches for HPE" % max_num_batches) \
-        #     as tqdm_pbar:
-        #     for i, item in enumerate(persistent_data_loader):
-        #         if i > max_num_batches:
-        #            break
-        #         tqdm_pbar.update(1)
+        from metrics import Avg3DError
+        from models import PCADecoderBlock
+        avg_3d_err_metric = Avg3DError(cube_side_mm=hpe_test_loader.params['cube_side_mm'],
+                                                    ret_avg_err_per_joint=False)
+        
+        avg_3d_err_metric.pca_decoder = \
+            PCADecoderBlock(num_joints=hpe_test_loader.params['num_joints'],
+                            num_dims=hpe_test_loader.params['world_dim'],
+                            pca_components=hpe_test_loader.params['pca_components'])
+        
+        ## weights are init as transposed of given
+        avg_3d_err_metric.pca_decoder.initialize_weights(weight_np=hpe_test_loader.pca_weights_np,
+                                                            bias_np=hpe_test_loader.pca_bias_np)
+        #avg_3d_err_metric.pca_decoder= avg_3d_err_metric.pca_decoder.to(device, dtype)
+        
+        with tqdm(total=len(hpe_test_loader), desc="Loading max %d batches for HPE" % max_num_batches) \
+            as tqdm_pbar:
+            for i, item in enumerate(hpe_test_loader):
+                inputs , targets = item
+                avg_3d_err_metric(hpe_baseline(data), targets)
+                if i > max_num_batches:
+                   break
+                tqdm_pbar.update(1)
 
 
         print("\n=> [%s] Debugging single batch training for HPE" % elapsed())

@@ -7,6 +7,7 @@ from collections import OrderedDict
 ## remove later
 import torch
 
+from models import BaseModel
 
 
 ### Notes planes are like channels!
@@ -191,7 +192,7 @@ class PCADecoderBlock(nn.Module):
 
 
 
-class DeepPriorPPModel(nn.Module):
+class DeepPriorPPModel(BaseModel): #nn.Module
     def __init__(self, input_channels=1, num_joints=21, num_dims=3, pca_components=30, dropout_prob=0.3,
                  train_mode=True, weight_matx_np=None, bias_matx_np=None, init_w=True):
         self.num_joints, self.num_dims = num_joints, num_dims

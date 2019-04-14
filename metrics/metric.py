@@ -45,20 +45,25 @@ class Avg3DError(object):
         self.ret_avg_err_per_joint = ret_avg_err_per_joint
 
         self.pca_decoder = None
-
+        self.__name__ = 'avg_3d_err_mm'
         ##self.pca
 
     def __call__(self, output, target):
         '''
             Note: input is torch tensors
         '''
+        
         ## pca -> keypoint space
         ## this needs to be a torch decoder
         ## (?x30) -> (?x21x3)
         output = self.pca_decoder(output, reshape=True)
+        target = self.pca_decoder(target, reshape=True)
+        #print("OUT_SHAPE: ", output.shape, "TARGET_SHAPE: ", target.shape)
+        #target = self.pca_decoder(target, reshape=True)
 
         ## -1,1 -> -depth_len/2, +depth_len/2
         output = unStandardiseKeyPointsCube(output, self.cube_side_mm)
+        target = unStandardiseKeyPointsCube(target, self.cube_side_mm)
         #output = self.unstandardiser(output)[BaseDataType.JOINTS]
 
         ## R^{500, 21, 3} == avg_err_per_joint ==> R^{500, 21}

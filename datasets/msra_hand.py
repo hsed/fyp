@@ -2,11 +2,16 @@ import os
 import numpy as np
 import sys
 import struct
+from typing import List, Any, Callable
+from argparse import Namespace
+from enum import IntEnum
+
 from torch.utils.data import Dataset
 
-from .base_data_types import BaseDataType as DT, \
+from .base_data_types import ExtendedDataType as DT, \
                              BaseDatasetType as DatasetMode, \
                              BaseTaskType as TaskMode
+
 
 ## starting from 1, each component of y_gt_mm_keypoints is
 # --1(wrist) -- index0
@@ -97,8 +102,8 @@ def load_depthmap(filename, img_width, img_height, max_depth):
 
 
 class MSRAHandDataset(Dataset):
-    def __init__(self, root, center_dir, mode, test_subject_id, transform=None, reduce=False,
-                 use_refined_com=False, retrieve_depth=True):
+    def __init__(self, root:str, center_dir:str, mode:str, test_subject_id:int, transform:object=None,
+                 reduce:bool=False, use_refined_com:bool=False, retrieve_depth:bool=True, randomise_params:bool=True):
         '''
             `reduce` => Train only on 1 gesture and 2 subjects, CoM won't work correctly
             `use_refined_com` => True: Use GT MCP (ID=5) ref; False: Use refined CoM pretrained.
@@ -122,6 +127,9 @@ class MSRAHandDataset(Dataset):
         self.transform = transform
         self.use_refined_com = use_refined_com
         self.retrieve_depth = retrieve_depth # whether to load depth during __call__, useful for faster pca learning
+        self.randomise_params = randomise_params
+        
+        self.RAND_SEED = 0 # only to be used when randomise_params is false!
 
         if not self.mode in ['train', 'test']: raise ValueError('Invalid mode')
         assert self.test_subject_id >= 0 and self.test_subject_id < self.subject_num
@@ -163,7 +171,9 @@ class MSRAHandDataset(Dataset):
                 DT.NAME: self.names[index], # sample name => R^{1}
                 DT.JOINTS: self.joints_world[index], # 3d joints of the sample => R^{63}
                 DT.COM: refpt, # => R^{3}
-                DT.DEPTH:  depthmap #depthmap => R^{480 x 640}
+                DT.DEPTH:  depthmap, #depthmap => R^{480 x 640}
+                DT.AUG_MODE: None if self.aug_modes is None else self.aug_modes[index],
+                DT.AUG_PARAMS: None if self.aug_params is None else self.aug_params[index]
         }
 
         ## a lot happens here.
@@ -177,7 +187,7 @@ class MSRAHandDataset(Dataset):
     def _load(self):
         self._compute_dataset_size()
 
-        print("Train/Test:", self.train_size, self.test_size )
+        print("[MSRA] Train Size:", self.train_size, "Test Size: ", self.test_size, "Mode:", self.mode)
 
         self.num_samples = self.train_size if self.mode == 'train' else self.test_size
         self.joints_world = np.zeros((self.num_samples, self.joint_num, self.world_dim), dtype=np.float32)
@@ -269,6 +279,8 @@ class MSRAHandDataset(Dataset):
         
         #print("NAMES_SZ: ", len(self.names))
         #print("Last three: ", self.names[-3:])
+        self.aug_modes = None
+        self.aug_params = None
 
 
     def _compute_dataset_size(self):
@@ -314,3 +326,39 @@ class MSRAHandDataset(Dataset):
                     return False
 
         return True
+
+
+    def make_transform_params_static(self, AugType: IntEnum, getAugModeParamFn: Callable[[List[IntEnum]], Any],
+                                     custom_aug_modes:List[IntEnum]=None):
+        '''
+            If no randomisation is requested then try to produce deterministic params for transformation.
+            Because this requires knowledge of how many samples exist it cannot be done by transformers
+            Instead params will be supplied by dataset __call__ function along with the usual stuff
+        '''
+
+        if self.randomise_params:
+            return # nothing to do
+        if not self.randomise_params:
+            print("[MSRA] Note: Using deterministic params for transformation!")
+            
+            ## now do something
+            if custom_aug_modes is not None:
+                print("[MSRA] Using Custom AugModes ONLY: %a" % custom_aug_modes)
+                valid_aug_modes = np.array(custom_aug_modes)
+            else:
+                valid_aug_modes = np.arange(len(AugType))
+            
+            #print("[MSRA] AugModeLims (RotAbsLim, ScaleStd, TransStd): ", self.aug_lims.abs_rot_lim_deg,
+            #        self.aug_lims.scale_std, self.aug_lims.trans_std)
+            ## reset seed
+            np.random.seed(self.RAND_SEED)
+            self.aug_modes = np.random.choice(valid_aug_modes, replace=True, size=len(self))
+            self.aug_modes = list(map(lambda i: AugType(i), self.aug_modes)) # convert to enumtype
+            
+            self.aug_params = [
+                getAugModeParamFn([aug_mode]) \
+                                    for aug_mode in self.aug_modes
+            ]
+
+            #print("[MSRA] Top-10 AugModes: ", self.aug_modes[:10], '\n')
+            #print("[MSRA] Top-10 AugParams: ", self.aug_params[:10])

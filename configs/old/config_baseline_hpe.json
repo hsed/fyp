@@ -19,14 +19,17 @@
         "args":{
             "data_dir": "datasets/hand_pose_action",
             "dataset_type": "train",
-            "batch_size": 64,
+            "batch_size": 128,
             "shuffle": true,
-            "validation_split": 0.2,
+            "validation_split": -1.0,
             "pca_components": 30,
             "use_pca_cache": true,
-            "num_workers": 4,
+            "num_workers": 8,
             "debug": false,
-            "reduce": true
+            "reduce": false,
+            "preload_depth": false,
+            "pca_overwrite_cache": false,
+            "use_msra": false
         }
     },
     "optimizer": {
@@ -38,9 +41,7 @@
         }
     },
     "loss": "mse_loss",
-    "metrics": [
-        "Avg3DError"
-    ],
+    "metrics": [],
     "lr_scheduler": {
         "type": "StepLR",
         "args": {
@@ -49,7 +50,7 @@
         }
     },
     "trainer": {
-        "epochs": 100,
+        "epochs": 50,
         "save_dir": "saved/",
         "save_period": 10,
         "verbosity": 2,

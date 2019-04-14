@@ -269,9 +269,13 @@ class DeepPriorXYTransform(object):
                                                 out2D_px=self.out_sz_px
                                                 )
        
+        # aug_mode, aug_param = getAugModeParam(self.aug_mode_lst, self.rot_lim, 
+        #                                         self.sc_std, self.tr_std)
+        # new unchanged but fixed aug_mode/param supported
         aug_mode, aug_param = getAugModeParam(self.aug_mode_lst, self.rot_lim, 
-                                                self.sc_std, self.tr_std)
-        
+                                                self.sc_std, self.tr_std) \
+                                                    if (sample[DT.AUG_MODE] is None or sample[DT.AUG_PARAMS] is None) else \
+                                                        sample[DT.AUG_MODE], sample[DT.AUG_PARAMS]        
         # notice we supply {dpt_crop, keypt_px_orig}, we need dpt_crop_aug
         # and keypt_mm_crop_aug
         # dpt_crop_aug is done using the transf func
@@ -439,7 +443,9 @@ class DeepPriorYTransform(DeepPriorXYTransform):
                                         )
         
         aug_mode, aug_param = getAugModeParam(self.aug_mode_lst, self.rot_lim, 
-                                                self.sc_std, self.tr_std)
+                                                self.sc_std, self.tr_std) \
+                                if (sample[DT.AUG_MODE] is None or sample[DT.AUG_PARAMS] is None) else \
+                                                        sample[DT.AUG_MODE], sample[DT.AUG_PARAMS]
 
         (_, keypt_px_orig_aug, com_px_orig_aug, _) = \
             rotateHand2D(None, keypt_px_orig, com_px_orig, aug_param) \

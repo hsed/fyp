@@ -1,0 +1,77 @@
+# note at this current stage it is left at testing msra dataset with rot+none aug for both train and pca
+# better use fp (--force-pca) flag also the very next thing to do is try replacing new augmentation transforms or basically
+# all transforms with original transforms you made for msra.... and do rot+None and see if results are better...
+
+name: BaselineHPE
+n_gpu: 1
+dtype: float
+target_dtype: float
+
+
+arch:
+  type: DeepPriorPPModel
+  args:
+    input_channels: 1
+    pca_components: 30
+    dropout_prob: 0.3
+    train_mode: true
+    init_w: true
+
+
+data_loader:
+  type: DepthJointsDataLoader
+  args:
+    data_dir: datasets/hand_pose_action
+    dataset_type: train
+    batch_size: 128
+    pca_components: 30
+    use_pca_cache: true
+    num_workers: 8
+    debug: false
+    reduce: false
+    preload_depth: false #true now this is not neede, after first epoch preloading is automatically done
+    pca_overwrite_cache: true #true
+    use_msra: false #true #false
+    pca_size: 200000
+    validation_split: 0.2 #-1.0 #0.2 #-1.0
+    shuffle: false # this can only be used if val split <= 0, if >0 then the shuffling is handled by randomsampler
+    randomise_params: true #false # true <false> ensures even after augmentation exactly same data is loaded every epoch!
+    data_aug: # None: 0, Rot: 1; Sc: 2; Trans: 3;
+      - 0
+      #- 1 #3 #1
+      #s- 2
+      #- 3
+    pca_data_aug:
+      - 0
+      #- 1 #3 #1
+      #- 2
+      #- 3
+    use_orig_transformers: false #true #false #true # true
+    use_orig_transformers_pca: false #true #false #true # true
+
+
+optimizer:
+  type: Adam
+  args:
+    lr: 0.001
+    weight_decay: 0
+    amsgrad: false #true
+loss: mse_loss
+metrics: [Avg3DError]
+lr_scheduler:
+  # type: StepLR
+  # args:
+  #   step_size: 50
+  #   gamma: 0.1
+
+
+trainer:
+  epochs: 20 #20 #10 #10 #20 #5 #15 #50 # 10 #50
+  save_dir: saved/
+  save_period: 500 #5 #10 #2 #10 # keep it big to avoid space, issue we can just save best weights
+  verbosity: 2
+  persistent_storage: false
+  monitor: "min val_avg_3d_err_mm" #"min val_loss" for best weights and early stopping
+  early_stop: 5 #20 #10 #20
+  tensorboardX: true
+  log_dir: logs #saved/logs

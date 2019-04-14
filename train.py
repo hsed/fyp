@@ -1,5 +1,5 @@
 import os
-import json
+import yaml
 import argparse
 import torch
 import numpy as np
@@ -30,63 +30,34 @@ def main(config, resume):
     ### new, if val_split < 0.0 then use test_set for validation so
     ### that we can still do early stopping
     if config['data_loader']['args']['validation_split'] < 0.0:
+        ## invode data_loader class object but now it returns a rest dataset
         print("Info: using test set for validation as val_split was < 0")
         valid_data_loader = getattr(module_data, config['data_loader']['type'])(
                                     config['data_loader']['args']['data_dir'],
-                                    batch_size=4,
+                                    batch_size=1024,#4,
                                     shuffle=False,
                                     validation_split=0.0,
                                     dataset_type='test',
-                                    num_workers=config['data_loader']['args']['num_workers']
+                                    num_workers=config['data_loader']['args']['num_workers'],
+                                    use_msra=config['data_loader']['args']['use_msra']
         )
 
     # build model architecture
     print("\n=> Building model...")
     model = get_instance(module_arch, 'arch', config)
-    #print(model)
+    print("Trainable Params:", model.param_count())
     
     # get function handles of loss and metrics
     print("\n=> Building loss and optimizer modules...")
     loss = getattr(module_loss, config['loss'])
     metrics = [getattr(module_metric, met) for met in config['metrics']]
 
-    ## special case for HPE
-    if module_metric.Avg3DError in metrics:
-        idx = metrics.index(module_metric.Avg3DError)
-        '''
-            This special metric requires a PCA decoder class with correct
-            parameters i.e. weight and bias matx pre-learnt during PCA training.
-
-            Currently, the implementation is such that the dataloader class for HPE
-            loads PCA and saves weights and biases, now these are automatically
-            initialised and can be accessed from the dataloader class.
-
-            Note: PCA is always learnt on training data with likely data augmentation
-
-            We replace the uninitialised reference with the initialised one here.
-
-        '''
-        ### init metric classes for future use
-        avg_3d_err_metric = module_metric.Avg3DError(cube_side_mm=data_loader.params['cube_side_mm'],
-                                                     ret_avg_err_per_joint=False)
-        
-        avg_3d_err_metric.pca_decoder = \
-            module_arch.PCADecoderBlock(num_joints=data_loader.params['num_joints'],
-                            num_dims=data_loader.params['world_dim'],
-                            pca_components=data_loader.params['pca_components'])
-        
-        ## weights are init as transposed of given
-        avg_3d_err_metric.pca_decoder.initialize_weights(weight_np=data_loader.pca_weights_np,
-                                                              bias_np=data_loader.pca_bias_np)
-        metrics[idx] = avg_3d_err_metric
-        
-    
-
+    print("[NEW] METRICS: ", metrics)
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
     optimizer = get_instance(torch.optim, 'optimizer', config, trainable_params)
-    lr_scheduler = get_instance(torch.optim.lr_scheduler, 'lr_scheduler', config, optimizer)
+    #lr_scheduler = get_instance(torch.optim.lr_scheduler, 'lr_scheduler', config, optimizer) TODO: Enable later..
 
     print("\n=> Building trainer...")
     trainer = Trainer(model, loss, metrics, optimizer, 
@@ -94,7 +65,7 @@ def main(config, resume):
                       config=config,
                       data_loader=data_loader,
                       valid_data_loader=valid_data_loader,
-                      lr_scheduler=lr_scheduler,
+                      lr_scheduler=None,#lr_scheduler,
                       train_logger=train_logger,
                       )
 
@@ -109,20 +80,35 @@ if __name__ == '__main__':
                            help='path to latest checkpoint (default: None)')
     parser.add_argument('-d', '--device', default=None, type=str,
                            help='indices of GPUs to enable (default: all)')
+    parser.add_argument('-fp', '--force-pca', default=None, action='store_true',
+                           help='Force re-calc of PCA cache')
+    parser.add_argument('-da', '--data-aug', default=None, nargs='+', type=int,
+                        help='[0,1,2,3]')
+    parser.add_argument('-pda', '--pca-data-aug', default=None, nargs='+', type=int,
+                        help='[0,1,2,3]')
     args = parser.parse_args()
 
     if args.config:
         # load config file
-        config = json.load(open(args.config))
+        config = yaml.load(open(args.config), Loader=yaml.SafeLoader)
         path = os.path.join(config['trainer']['save_dir'], config['name'])
     elif args.resume:
         # load config file from checkpoint, in case new config file is not given.
         # Use '--config' and '--resume' arguments together to load trained model and train more with changed config.
         config = torch.load(args.resume)['config']
     else:
-        raise AssertionError("Configuration file need to be specified. Add '-c config.json', for example.")
+        raise AssertionError("Configuration file need to be specified. Add '-c config.yaml', for example.")
     
     if args.device:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.device
+
+    ## add cmd args to config, overwrite if necessary
+    if args.force_pca is not None:
+        config['data_loader']['args']['pca_overwrite_cache'] = args.force_pca
+    
+    if args.data_aug is not None:
+        config['data_loader']['args']['data_aug'] = args.data_aug
+    if args.pca_data_aug is not None:
+        config['data_loader']['args']['pca_data_aug'] = args.pca_data_aug
 
     main(config, args.resume)

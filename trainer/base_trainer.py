@@ -1,6 +1,6 @@
 import os
 import math
-import json
+import yaml
 import logging
 import datetime
 import torch
@@ -15,6 +15,10 @@ class BaseTrainer:
     def __init__(self, model, loss, metrics, optimizer, resume, config, train_logger=None):
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
+
+        ## this is extended later
+        self.lr_scheduler=None
+        self.do_validation=None
 
         # setup GPU device if available, move model into configured device
         self.dtype = getattr(torch, config['dtype'])
@@ -49,7 +53,10 @@ class BaseTrainer:
         self.start_epoch = 1
 
         # setup directory for checkpoint saving
-        start_time = datetime.datetime.now().strftime('%m%d_%H%M%S')
+        start_time = datetime.datetime.now().strftime('%m%d_%H%M')
+        print("Experiment:", start_time)
+        self.start_time = start_time
+        
         self.checkpoint_dir = os.path.join(cfg_trainer['save_dir'], config['name'], start_time)
         # setup visualization writer instance
         writer_dir = os.path.join(cfg_trainer['log_dir'], config['name'], start_time)
@@ -57,12 +64,17 @@ class BaseTrainer:
 
         # Save configuration file into checkpoint directory:
         ensure_dir(self.checkpoint_dir)
-        config_save_path = os.path.join(self.checkpoint_dir, 'config.json')
+        config_save_path = os.path.join(self.checkpoint_dir, 'config.yaml')
         with open(config_save_path, 'w') as handle:
-            json.dump(config, handle, indent=4, sort_keys=False)
+            yaml.dump(config, handle, sort_keys=False) # note sort keys only works with yaml >= 5.1
 
         if resume:
             self._resume_checkpoint(resume)
+        
+        ### add useful info to writer
+        config_str = yaml.dump(config).replace('\n','<br/>').replace(' ', '&nbsp;')
+        self.writer.add_text('info/config', config_str, 0)
+        self.writer.add_text('info/model_params', 'Trainable Params: ' + str(model.param_count()), 0)
     
     def _prepare_device(self, n_gpu_use):
         """ 
@@ -87,6 +99,14 @@ class BaseTrainer:
 
         for epoch in range(self.start_epoch, self.epochs + 1):
             result = self._train_epoch(epoch)
+
+            ## now do val only works if this method is called from extended class
+            if self.do_validation:
+                val_log = self._valid_epoch(epoch)
+                result = {**result, **val_log}
+
+            if self.lr_scheduler is not None:
+                self.lr_scheduler.step()
             
             # save logged informations into log dict
             log = {'epoch': epoch}
@@ -102,7 +122,7 @@ class BaseTrainer:
             if self.train_logger is not None:
                 self.train_logger.add_entry(log)
                 if self.verbosity >= 1:
-                    log_str = ''.join(['{:5s}: {:.2f}; '.format(str(key), value) for key,value in  log.items()])
+                    log_str = ''.join(['{:5s}: {:.4f}\t'.format(str(key).capitalize(), value) for key,value in  log.items()])
                     self.logger.info(log_str)
 
             # evaluate model performance according to configured metric, save best checkpoint as model_best
@@ -128,12 +148,25 @@ class BaseTrainer:
                 if not_improved_count > self.early_stop:
                     self.logger.info("Validation performance didn\'t improve for {} epochs. Training stops.".format(self.early_stop))
                     break
-
-            if epoch % self.save_period == 0:
-                self._save_checkpoint(epoch, save_best=best)
             
+            if best:
+                # if best only save as '*best*.pth'
+                self._save_checkpoint(epoch, save_best=True)
+            if epoch % self.save_period == 0:
+                # additionally if at checkpoint, also save regularly
+                self._save_checkpoint(epoch, save_best=False)
+        
+        self.logger.info("Experiment %s completed successfully." % self.start_time)
 
     def _train_epoch(self, epoch):
+        """
+        Training logic for an epoch
+
+        :param epoch: Current epoch number
+        """
+        raise NotImplementedError
+    
+    def _valid_epoch(self, epoch):
         """
         Training logic for an epoch
 
@@ -160,12 +193,13 @@ class BaseTrainer:
             'config': self.config
         }
         filename = os.path.join(self.checkpoint_dir, 'checkpoint-epoch{}.pth'.format(epoch))
-        torch.save(state, filename)
-        self.logger.info("Saving checkpoint: {} ...".format(filename))
         if save_best:
             best_path = os.path.join(self.checkpoint_dir, 'model_best.pth')
             torch.save(state, best_path)
             self.logger.info("Saving current best: {} ...".format('model_best.pth'))
+        else:
+            torch.save(state, filename)
+            self.logger.info("Saving checkpoint: {} ...".format(filename))
 
     def _resume_checkpoint(self, resume_path):
         """
