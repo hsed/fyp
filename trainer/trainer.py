@@ -29,7 +29,6 @@ class Trainer(BaseTrainer):
 
                 ## special case for HPE
         if Avg3DError in self.metrics:
-            idx = metrics.index(Avg3DError)
             '''
                 This special metric requires a PCA decoder class with correct
                 parameters i.e. weight and bias matx pre-learnt during PCA training.
@@ -43,6 +42,9 @@ class Trainer(BaseTrainer):
                 We replace the uninitialised reference with the initialised one here.
 
             '''
+            print("[TRAINER] Using Avg3DError Metric with Params: ", self.data_loader.params)
+
+            idx = metrics.index(Avg3DError)
             ### init metric classes for future use
             avg_3d_err_metric = Avg3DError(cube_side_mm=self.data_loader.params['cube_side_mm'],
                                                         ret_avg_err_per_joint=False)
