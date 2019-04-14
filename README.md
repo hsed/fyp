@@ -482,3 +482,23 @@ Cropping:
 
 Action:
 - try all methods listed above to incorporate action info into HPE...
+
+
+
+
+```bash
+cat /dev/zero | ssh-keygen -q -N ""
+cat ~/.ssh/id_rsa.pub
+git config --global user.email "you@example.com"
+git config --global user.name "Your Name"
+# <after adding key to git>
+git clone git@github.com:hsed/fyp.git
+cd fyp
+
+apt update && apt install -y libsm6 libxext6 libxrender-dev zip unzip curl wget nano
+pip install jupyterlab tensorflow tensorboardx opencv-python
+
+curl -L https://imperialcollegelondon.box.com/shared/static/LINK_HIDDEN -o datasets/hand_pose_action/data_train_hpe_cache.h5
+curl -L https://imperialcollegelondon.box.com/shared/static/LINK_HIDDEN -o datasets/hand_pose_action/data_test_hpe_cache.h5
+
+```
