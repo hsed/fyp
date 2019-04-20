@@ -29,18 +29,18 @@ def main(config, resume):
 
     ### new, if val_split < 0.0 then use test_set for validation so
     ### that we can still do early stopping
-    if config['data_loader']['args']['validation_split'] < 0.0:
-        ## invode data_loader class object but now it returns a rest dataset
-        print("Info: using test set for validation as val_split was < 0")
-        valid_data_loader = getattr(module_data, config['data_loader']['type'])(
-                                    config['data_loader']['args']['data_dir'],
-                                    batch_size=1024,#4,
-                                    shuffle=False,
-                                    validation_split=0.0,
-                                    dataset_type='test',
-                                    num_workers=config['data_loader']['args']['num_workers'],
-                                    use_msra=config['data_loader']['args']['use_msra']
-        )
+    # if config['data_loader']['args']['validation_split'] < 0.0:
+    #     ## invode data_loader class object but now it returns a rest dataset
+    #     print("Info: using test set for validation as val_split was < 0")
+    #     valid_data_loader = getattr(module_data, config['data_loader']['type'])(
+    #                                 config['data_loader']['args']['data_dir'],
+    #                                 batch_size=512, # temp out of mem errors #1024,#4,
+    #                                 shuffle=False,
+    #                                 validation_split=0.0,
+    #                                 dataset_type='test',
+    #                                 num_workers=config['data_loader']['args']['num_workers'],
+    #                                 use_msra=config['data_loader']['args']['use_msra']
+    #     )
 
     # build model architecture
     print("\n=> Building model...")
