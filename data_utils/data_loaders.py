@@ -48,31 +48,28 @@ def _check_pca(data_dir, pca_transformer, data_transforms,
             #print("FIRST ITEM:\n", y_set[0])
             #quit()
 
-            if not randomise_params:
-                print('[PCA_CHECKER] Randomise Params are off, deterministic PCA will be computed')
-                rot_lim=transform_base_params['aug_lims'].abs_rot_lim_deg
-                sc_std=transform_base_params['aug_lims'].scale_std
-                tr_std=transform_base_params['aug_lims'].trans_std
-
-                allowed_aug_modes = np.arange(len(AugType))
-                if isinstance(data_transforms, transforms.Compose):
-                    for item in data_transforms.transforms:
-                        if getattr(item, 'aug_mode_lst', False):
-                            #print("FOUND LIST", item.aug_mode_lst)
-                            allowed_aug_modes = item.aug_mode_lst
-                print('[PCA_CHECKER] Deterministic AugMode List: ', allowed_aug_modes)
-                y_set.make_transform_params_static(AugType, \
-                    (lambda aug_mode_list: getAugModeParam(aug_mode_list, rot_lim, sc_std, tr_std)[1]),
-                     custom_aug_modes= allowed_aug_modes)
-
-
-
         else:
             print("Info: Using FHAD for PCA...")
             y_set = HandPoseActionDataset(data_dir, 'train', 'hpe',
                                         transform=data_transforms, reduce=False, retrieve_depth=False)
-        
-        
+            # if not randomise_params:
+            #     print('[PCA_CHECKER] WARN: Random Param is OFF BUT deterministic augmentation not implemented for FHAD!')
+        if not randomise_params:
+            print('[PCA_CHECKER] Randomise Params are off, deterministic PCA will be computed')
+            rot_lim=transform_base_params['aug_lims'].abs_rot_lim_deg
+            sc_std=transform_base_params['aug_lims'].scale_std
+            tr_std=transform_base_params['aug_lims'].trans_std
+
+            allowed_aug_modes = np.arange(len(AugType))
+            if isinstance(data_transforms, transforms.Compose):
+                for item in data_transforms.transforms:
+                    if getattr(item, 'aug_mode_lst', False):
+                        #print("FOUND LIST", item.aug_mode_lst)
+                        allowed_aug_modes = item.aug_mode_lst
+            print('[PCA_CHECKER] Deterministic AugMode List: ', allowed_aug_modes)
+            y_set.make_transform_params_static(AugType, \
+                (lambda aug_mode_list: getAugModeParam(aug_mode_list, rot_lim, sc_std, tr_std)[1]),
+                    custom_aug_modes= allowed_aug_modes)
         
         y_pca_len = y_pca_len #int(2e5)
 
@@ -194,13 +191,15 @@ class DepthJointsDataLoader(BaseDataLoader):
                 use_msra=False, data_aug=None, pca_data_aug=None,
                 use_orig_transformers=False, use_orig_transformers_pca=False,
                 randomise_params=True, crop_depth_ver=0, pca_size=int(2e5),
-                crop_pad_3d=[40, 40, 50.], cube_side_mm=190):
+                crop_pad_3d=[30., 30., 100.], crop_pad_2d=[40, 40, 100.], cube_side_mm=190):
         '''
             preload depth is not really needed, pytorch is intelligent and after
             first epoch everything is preloaded i.e. shared memory is used for
             dataset because training after first epoch is much faster
             even without preloading
         '''
+
+        print('[DATALOADER] VAL_SPLIT => ', validation_split)
 
         if reduce:
             num_workers = 0
@@ -243,7 +242,7 @@ class DepthJointsDataLoader(BaseDataLoader):
             'dep_params': DepthParameters,
             'aug_lims': Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180),
             'crop_depth_ver': crop_depth_ver,
-            'crop_pad_3d': tuple(crop_pad_3d), # tuple required for transformers, but yaml loads as list by def
+            'crop_pad': tuple(crop_pad_3d) if crop_depth_ver <= 1 else tuple(crop_pad_2d), # tuple required for transformers, but yaml loads as list by def
             'debug_mode': debug,
         }
 
@@ -366,10 +365,7 @@ class DepthJointsDataLoader(BaseDataLoader):
                 self.val_dataset = MSRAHandDataset(root=data_dir, center_dir='', mode=dataset_type, 
                                                    test_subject_id=0, transform=val_transfrm, reduce=reduce,
                                                    use_refined_com=False, randomise_params=randomise_params)
-                if not randomise_params:
-                    self.val_dataset.make_transform_params_static(AugType, \
-                        (lambda aug_mode_list: getAugModeParam(aug_mode_list, rot_lim, sc_std, tr_std)[1]),
-                        custom_aug_modes=train_aug_list)
+            
         else:
             self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
                                                  transform=trnsfrm, reduce=reduce,
@@ -378,6 +374,17 @@ class DepthJointsDataLoader(BaseDataLoader):
                 self.val_dataset = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
                                                  transform=val_transfrm, reduce=reduce,
                                                  retrieve_depth=True, preload_depth=preload_depth)
+            elif validation_split < 0.0:
+                print("[DATALOADER] Setting Val_Set as test dataset")
+                self.val_dataset = HandPoseActionDataset(data_dir, 'test', 'hpe',
+                                                 transform=val_transfrm, reduce=reduce,
+                                                 retrieve_depth=True, preload_depth=preload_depth)
+        
+        # do this for any dataset...
+        if not randomise_params and validation_split != 0.0:
+            self.val_dataset.make_transform_params_static(AugType, \
+                (lambda aug_mode_list: getAugModeParam(aug_mode_list, rot_lim, sc_std, tr_std)[1]),
+                custom_aug_modes=train_aug_list)
 
         ### before exiting ensure PCA is pre-computed (using cache on disk)
         ### if not we need to compute
@@ -400,7 +407,7 @@ class DepthJointsDataLoader(BaseDataLoader):
         super(DepthJointsDataLoader, self).\
             __init__(self.dataset, batch_size, shuffle, validation_split, num_workers,
                      collate_fn=CollateDepthJointsBatch(),
-                     randomise_params=randomise_params)# need to init collate fn
+                     val_dataset=self.val_dataset, randomise_params=randomise_params)# need to init collate fn
 
         if debug:
             print("Data Loaded! Took: %0.2fs" % (time.time() - t))

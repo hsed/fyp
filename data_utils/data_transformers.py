@@ -289,7 +289,7 @@ class TransformerBase(object):
     def __init__(self, num_joints = 21, world_dim = 3, cube_side_mm = 200,
                  cam_intrinsics = CAM, dep_params = DepParam, 
                  aug_lims=Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180), 
-                 crop_depth_ver=0, crop_pad_3d:Tuple[int,int,float] = (40,40,50.), debug_mode=False):
+                 crop_depth_ver=0, crop_pad:Tuple[int or float,int or float,float] = (40,40,50.), debug_mode=False):
         self.num_joints = num_joints
         self.world_dim = world_dim
 
@@ -308,7 +308,7 @@ class TransformerBase(object):
 
         self.crop_depth_ver = crop_depth_ver
 
-        self.crop_pad_3d = crop_pad_3d
+        self.crop_pad = crop_pad
 
         self.debug_mode = debug_mode
 
@@ -522,7 +522,7 @@ class DepthCropper(TransformerBase):
         #self.px2mm_multi = Pixels2MM(cam_intrinsics=self.cam_intrinsics)
 
         if self.crop_depth_ver > 0:
-            print('[DEPTHCROPPER] Using ver.%d depth cropping' % self.crop_depth_ver)
+            print('[DEPTHCROPPER] Using ver.%d depth cropping with %a padding' % (self.crop_depth_ver, self.crop_pad))
         
         #assert (self.crop_depth_ver == 0 or self.crop_depth_ver == 2), "Only v0 and v2 cropping is supported"
 
@@ -551,17 +551,17 @@ class DepthCropper(TransformerBase):
         ## required CoM in px value
         ## convert to 128x128 for network
         ## px_transform_matx for 2D transform of keypoints in px values
-        keypt_mm_crop = keypt_mm_orig - com_mm_orig
 
         dpt_crop, crop_transf_matx = cropDepth2D(
-                                                dpt_orig, keypt_px_orig, com_px_orig, keypt_mm_crop,
-                                                fx=self.cam_intrinsics.FX.value,
-                                                fy=self.cam_intrinsics.FY.value,
-                                                crop3D_mm=self.crop_shape3D_mm,
-                                                out2D_px=self.out_sz_px,
-                                                crop_ver=self.crop_depth_ver,
-                                                crop_pad=self.crop_pad_3d,
-                                                )
+            dpt_orig, keypt_px_orig, com_px_orig,
+            keypt_mm_orig, com_mm_orig,
+            fx=self.cam_intrinsics.FX.value,
+            fy=self.cam_intrinsics.FY.value,
+            crop3D_mm=self.crop_shape3D_mm,
+            out2D_px=self.out_sz_px,
+            crop_ver=self.crop_depth_ver,
+            crop_pad=self.crop_pad
+        )
 
         #if self.debug_mode:
             #plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, crop_transf_matx)
