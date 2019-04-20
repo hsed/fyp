@@ -3,6 +3,7 @@ import sys
 import struct
 import time
 from enum import IntEnum
+from typing import List, Any, Callable
 
 #import cv2 # no longer using this
 import h5py
@@ -10,6 +11,7 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 from torch.utils.data import Dataset
+
 
 from .base_data_types import ExtendedDataType as DT, \
                              BaseDatasetType as DatasetMode, \
@@ -109,6 +111,10 @@ class HandPoseActionDataset(Dataset):
         self.coms_world = []
         self.actions = []
         self.depthmaps = []
+        self.aug_modes = None
+        self.aug_params = None
+
+        self.RAND_SEED = 0 
 
         
         self._load()
@@ -167,8 +173,8 @@ class HandPoseActionDataset(Dataset):
                           if self.preload_depth is False \
                           else self.depthmaps[index], #depthmap => R^{480 x 640}
                 DT.ACTION: self.actions[index], # action => R^{1}
-                DT.AUG_MODE: None, # if self.aug_modes is None else self.aug_modes[index],
-                DT.AUG_PARAMS: None, # if self.aug_params is None else self.aug_params[index]
+                DT.AUG_MODE: None if self.aug_modes is None else self.aug_modes[index],
+                DT.AUG_PARAMS: None if self.aug_params is None else self.aug_params[index]
             }
 
         #print("SHAPE::: ", sample[DT.DEPTH_SEQ].shape, "DTYPE::: ", sample[DT.DEPTH_SEQ].dtype)
@@ -498,6 +504,36 @@ class HandPoseActionDataset(Dataset):
                 self.action_class_dict[i] = line.split(' ')[1]
                
             self.action_classes = len(self.action_class_dict)
+    
+
+    def make_transform_params_static(self, AugType: IntEnum, getAugModeParamFn: Callable[[List[IntEnum]], Any],
+                                     custom_aug_modes:List[IntEnum]=None):
+        '''
+            If no randomisation is requested then try to produce deterministic params for transformation.
+            Because this requires knowledge of how many samples exist it cannot be done by transformers
+            Instead params will be supplied by dataset __call__ function along with the usual stuff
+        '''
+        print("[FHAD] Note: Using deterministic params for transformation!")
+        
+        ## now do something
+        if custom_aug_modes is not None:
+            print("[FHAD] Using Supplied AugModes: %a" % custom_aug_modes)
+            valid_aug_modes = np.array(custom_aug_modes)
+        else:
+            valid_aug_modes = np.arange(len(AugType))
+            print("[FHAD] Using ALL AugModes: %a" % valid_aug_modes)
+        
+        #print("[MSRA] AugModeLims (RotAbsLim, ScaleStd, TransStd): ", self.aug_lims.abs_rot_lim_deg,
+        #        self.aug_lims.scale_std, self.aug_lims.trans_std)
+        ## reset seed
+        np.random.seed(self.RAND_SEED)
+        self.aug_modes = np.random.choice(valid_aug_modes, replace=True, size=len(self))
+        self.aug_modes = list(map(lambda i: AugType(i), self.aug_modes)) # convert to enumtype
+        
+        self.aug_params = [
+            getAugModeParamFn([aug_mode]) \
+                                for aug_mode in self.aug_modes
+        ]
 
 
 
