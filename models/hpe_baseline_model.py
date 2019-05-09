@@ -257,23 +257,23 @@ class DeepPriorPPModel(BaseModel): #nn.Module
         #x = x.float()   # cast to float,temp fix..., later whole shuld be float
         #print('TEST DATA NEW: ', len(x), x[0].shape, x[1].shape)
 
-        # if isinstance(x, tuple):
-        #     ## new depth+action
-        #     ## both these elements are tensors but of different types
-        #     x, a = x # (dpt, action) in tuple
-        #     # quit()
+        if isinstance(x, tuple):
+            ## new depth+action
+            ## both these elements are tensors but of different types
+            x, a = x # (dpt, action) in tuple
+            # quit()
 
-        #     ## a simple embedding methoddoesn't require long
-        #     ## if long is needed it should be back converted here,
-        #     ## long -> float -> long is safe for ints no data lost just a bit ineff
-        #     # [BATCH_SIZE] -> [BATCH_SIZE, 1, 1, 1] -> [BATCH_SIZE, 1, 128, 128]
-        #     a = a.unsqueeze(1).unsqueeze(1).unsqueeze(1).expand_as(x)
+            ## a simple embedding methoddoesn't require long
+            ## if long is needed it should be back converted here,
+            ## long -> float -> long is safe for ints no data lost just a bit ineff
+            # [BATCH_SIZE] -> [BATCH_SIZE, 1, 1, 1] -> [BATCH_SIZE, 1, 128, 128]
+            a = a.unsqueeze(1).unsqueeze(1).unsqueeze(1).expand_as(x)
 
             
-        #     dpt = x #[0] ##temp
-        #     act = a ##temp
-        #     x = torch.cat((x, a), 1)  # concat on channel axis -> [BATCH_SIZE, 2, 128, 128]
-        #     #print("X_SHAPE> ", x.shape, "A_SHAPE>> ", act.shape, "X_old.shape ", dpt.shape) ##temp
+            dpt = x #[0] ##temp
+            act = a ##temp
+            x = torch.cat((x, a), 1)  # concat on channel axis -> [BATCH_SIZE, 2, 128, 128]
+            #print("X_SHAPE> ", x.shape, "A_SHAPE>> ", act.shape, "X_old.shape ", dpt.shape) ##temp
 
         x = self.main_layers(x)
         
