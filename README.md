@@ -133,18 +133,17 @@ Input: Depth; Output: Keypoints
 
 #### Progress:
 - [x] Cacheable procedure to load train/test flat sequences of images
-- [ ] Incorporate original deep-prior preprocessing with augmentation
+- [x] Incorporate original deep-prior preprocessing with augmentation
   - [x] X,Y pre-process+augment
-  - [ ] only Y pre-process+aug for pca
-  - [ ] PCA and pca learning
-- [ ] Train on orig deep-prior++ with orig method i.e. augmentation
-- [ ] Add procedure to validate usign custom metric (3D error) per epoch
-- [ ] Perform NEW pre-processing on depth images without any augmentation
-- [ ] Perform NEW pre-processing on keypoints images without any augmentation
-- [ ] Train on NEW without augmentation
-- [ ] Add NEW augmentation procedures to pre-processing
-- [ ] Train NEW with augmentation
-- [ ] ???
+  - [x] only Y pre-process+aug for pca
+  - [x] PCA and pca learning
+- [x] Train on orig deep-prior++ with orig method i.e. augmentation
+- [x] Add procedure to validate usign custom metric (3D error) per epoch
+- [x] Perform NEW pre-processing on depth images without any augmentation
+- [x] Perform NEW pre-processing on keypoints images without any augmentation
+- [x] Train on NEW without augmentation
+- [x] Add NEW augmentation procedures to pre-processing
+- [x] Train NEW with augmentation
 
 
 NEW: no depth thresholding, better method for standardisation, better method for cropping
@@ -248,8 +247,8 @@ Note for experiments exp on val set choose best their THEN retrain on full train
 
 ## TODO
  - [ ] Implement Visualisation AFTER training with test cases and predicted output along with 3D error for that frame, so you see more than just avg 3D error.
- - [ ] Implement Augmentation **EXP 1**
- - [ ] Implement New Crop Method see if its better or worse **EXP 2**
+ - [x] Implement Augmentation **EXP 1**
+ - [x] Implement New Crop Method see if its better or worse **EXP 2**
  - [ ] Try 'conditioning' in various ways, see experiments below. **EXP 3**
 
 
@@ -280,15 +279,20 @@ After all the best choices from above, do different choices for concatenation of
 
 Baseline: Original + (OLD/NEW) CROP + (???) AUG -> 25mm
 
-| Method of Concat | Other Notes | Val Error (Train on 0.8 train-set) | Test Error (Train on full train-set) |
-| -----------------| ------------| -----------------------------------| ------------------------------------ |
-SoftmaxActionOut | Train with action label as output rather than input so a softmax layer as oputput and gradients backpropagating, its like multi-task learning | - | - |
-ConcatAsImgChannel1 | 45x1x1dim one-hot -> 45x128x128 with only one channel ones all zeros; 45:1 concat | - | - |
-ConcatAsImgChannel2 | 45x1x1->45x128x128 learnt embedd concat 45:1 concat | - | - |
-ConcatAsImgChannel3 | 45->128x128 embedding then concat 1:1 | - | - |
-ConcatAsImgChannel4 | 45x1x1 -> 45x128x128 upsample then concat 45:1 | - | - |
-ConcatAsImgChannel4 | 45x1x1 -> 45x128x128 upsample the conv -> 1x128x128 then concat 1:1 | - | - |
-Concat+Softmax | Best Concat + Softmax | - | - |
+Baseline: BaselineHPE/0420_2254 ()
+
+Epochs: 30 (BEST@EP__)
+
+| Method of Concat | Experiment | Other Notes | Val Error (Train on 1.0 train-set, test on 0.2 val-set) | Test Error (Train on full train-set) |
+| -----------------| --------- | -------------------------- | ---------------- | ----------------- |
+Baseline | BaselineHPE/0509_1106 | See experiment for config, crop2, deterministic, gpuid3, no data aug, valsplit -0.2 | 22.0583 (22.0340@EP26) | - |
+SoftmaxActionOut | - | Train with action label as output rather than input so a softmax layer as oputput and gradients backpropagating, its like multi-task learning | ~32.0747 (~31.5010mm@EP28) | - |
+ConcatAsImgChannel1 | - | 45x1x1dim one-hot -> 45x128x128 with only one channel ones all zeros; 45:1 concat | - | - |
+ConcatAsImgChannel2 | - | 45x1x1->45x128x128 learnt embedd concat 45:1 concat | - | - |
+ConcatAsImgChannel3 | - | 45->128x128 embedding then concat 1:1 | - | - |
+ConcatAsImgChannel4 | - | 45x1x1 -> 45x128x128 upsample then concat 45:1 | - | - |
+ConcatAsImgChannel4 | - | 45x1x1 -> 45x128x128 upsample the conv -> 1x128x128 then concat 1:1 | - | - |
+Concat+Softmax | - | Best Concat + Softmax | - | - |
 
 
 
@@ -502,3 +506,117 @@ curl -L https://imperialcollegelondon.box.com/shared/static/LINK_HIDDEN -o datas
 curl -L https://imperialcollegelondon.box.com/shared/static/LINK_HIDDEN -o datasets/hand_pose_action/data_test_hpe_cache.h5
 
 ```
+
+---
+---
+
+### New Cropping Methods
+
+Tried:
+- standard method
+- tried the padding method notice the not ideal not exact ratio of x/y causes the distoreted? squashed inages
+
+here device id 2 was used! (gpu 3)
+new tests in DETERMIISTIC MODE FOR REPETITION
+
+(best ound at earlier stage, mode 2 not sure how we got here exactly?)
+
+0414_1446 -> Mode 0 (wasn't really working that well --- a bit upper bounding) -- need to do this again for full 20 epochs!!!
+0414_1650 -> Mode 1 (usable future choice)
+0414_1552 -> Mode 2 (note im not sure if this is with double int or single rounding, see later...; 0414_1902 is WITH DOUBLE INT ROUNDING)
+                    Need one more experiment to see if 1552 is better or not basically now test single int rounding...
+                    If next experiment is worse that 1902, then re-enable double rounding! int(...) ; int(...).
+                    1902 is better so we stick to double rounding!!
+0414_1809 -> Mode 3 (almost as good as mode 1)
+
+
+mode 0: usually upper bound for most graps however a lot of variaion  
+mode 1: least variations also the best lowest score in 20 steps
+mode 2: generally an upper bound for most large parts where errors remain large, it does come down however in 20 steps as lowest score
+mode 3: looks good as well mimic mode 1 in amny places
+
+one thing we've noticed is that the keypoints don't scale properly i.e. unhandled by code so we can't have different x and different y ranges this is the case with method 2 the problem occurs that keypoint projection on depthmaps clearly show misalignement thus padd w.r.t CoM in both x and y dirs must be same! Otherwise aspect ratio is not presevered, we can see method 2 images appearing squashed
+
+Method 0:
+Original crop from deep-prio++ for msra dataset WITH OFFSET ADDITION REMOVED (note this is imp!) as this is not needed for FHAD and produces undesirable results, this has no impact on msra provided only meth 0, 1, 3 are used i.e. no custom aspect ratio cropping.
+
+Method 1:
+  We supply keypt values centered w.r.t to CoM i.e keypt_diff = keypt - CoM then take the max(abs(keypt_diff)) of each dir and add some extra mm padding in each direc (+ and - sperately) with equal amounts of padding for x,y with max_val(x_max, y_max) chosen.
+  similar for z using redefined padding value.
+
+method 2:
+  Here all stuff is done in pixel domain, find first the min and max of, x,y values and then for each dir choose whichever is farthest from com and set that as 'amount' of buffer for xy_startend 
+  zstart is based on depth_pad param and max and min keypts value so not really linked to com....
+
+method 3:
+ an improvement of method 2 based on com now, a px_diff is now computed much similar to method 1. the x and y diffs are compared and max of that is selected for both x and y for aspect ratio preserving and for zaxis as well com is used so that in end com is always in center of point for x,y and z axis. the buffer is added respectively for x, y and z for x,y, exact same values are highly recommended for aspect ratio preservation.
+
+
+YOU NEED SMOOTHING TO DRAW SOME CONCLUSIONS! SEE 0.6x-0.8x smoothing! also this one after smoothing method 1 or 3 are best
+
+it makes logical sense to have all axis CoM as center this is so that it is analogous ti 3D domain where the 3D values of skeleton is always w.r.t CoM therefore it makes sense if CoM is also in center of depth img
+
+
+
+| Experiment           | Crop SZ | Y Range [Min, Max]| PCA Range [Min, Max]  | Valid3DError@Ep10 (@EP20) | Notes |
+| -------------------- | ------- | ----------------- | --------------------  | ------------------------ | ----- |
+|BaselineHPE/0414_1218 | 200mm   | ??? | ??? | 12.48mm | - |
+
+
+----
+
+#try crop_pad_3d: [90., 90., 100.] [0., 0., 100.] vs #[30., 30., 100.]
+try changing crop_shape (useful for y values) to ~400!!
+
+
+## next experiments
+AUG MODES + DETERMINISM
+
+-> try mode 1 -- with augmentation train_0,1 + pca_0,1,3
+try mode 2 -- with augmentation train_0,1 + pca_0,1,3
+
+try mode 3 -- with augmentation train_0,1 + pca_0,1,3
+
+
+### Choosing the Validation Set
+
+- Tried Trainset 0.8:0.2 vs 1.0+Test_Set method, validation curve do not follow test-set. Possible reasoning: PCA used entire train-set, train-set gets too small. See '' vs '' 
+
+<INSERT PIC HERE>
+
+
+- Newer method: Tried train set 1.0 + 0.2 Test Set. Actually, good upper bound on test set which is good. Also matches quite closely. See experiment BaselineHPE/0419_1744 vs BaselineHPE/0417_1634
+
+< insert picture here >
+
+
+Answer: 
+1.0 Trainset + 0.2 Validation Set for Quick Testing w/ 20-30EP training depending on impact. With ~10EP early stopping. no checkpointing but maybe saving the best model and if best model != last model then saving that too for continuation.
+
+### Choosing the Cropping Method
+
+We applied four different cropping methods see statement above. The best we found was method #2 and we will stick with that, even though it produces worse results when visually seeing it images get squashed but overall error is low. **NEED TO VERIFY THAT AFTER PREDICTION IT LOOKS GOOD TOO**.
+
+< insert picture here>
+
+### Data Augmentation
+This does slight improvements but after a long number of epochs, so its not very benefitial -> 
+
+Tests : Best data aug : 0 (None) + 1 (Rot) + 3 (Trans) & PCA: 0, 1, 2 (Scale), 3.
+
+BaselineHPE/0419_1007 (note this is full test set maybe its better to show validation partial test set as we'll use that in continuation!)
+
+
+### Baseline Performance
+
+Test-Set as shown in BaselineHPE/0417_1634
+
+We will do a full baseline validation set performance as well....
+
+Validation: BaselineHPE/0419_1744
+
+
+### Action Test
+We perform one test with having target with action and using combined loss function. loss is too high and we get a much worse value. we didnt test with alpha i.e. how much of one component to use. 
+
+In future we will try to cleate a new class and add new data loaders that convert action to one hot and so on and then we have an embedding layer that converts 1x1x45 to 128x128x45 -> 64x64x32 or something like that basically 1/2 or 1/4 or 3/4 of the channels of input then we use the network as is and try to see if any imprvement possible we can also use VAE
