@@ -74,7 +74,11 @@ class CollateJointsSeqBatch(object):
 
 
 class CollateDepthJointsBatch(object):
-    def __init__(self):
+    def __init__(self, inputs = 1, outputs = 1):
+        self.inputs = inputs
+        self.outputs = outputs
+
+        #print("[COLLATE_FN] INPUTS, OUTPUTS: ", self.input_indices, self.output_indices)
         pass
 
     
@@ -88,9 +92,9 @@ class CollateDepthJointsBatch(object):
             - joints_seq is already in numpy.ndarray format
         '''
 
-        # print("Type_of_batch: ", type(batch))
-        # print("Type_of_batch[0]: ", type(batch[0]))
-        # print("Type_of_batch[0][0]: ", type(batch[0][0]))
+        #print("Type_of_batch: ", type(batch))
+        #print("Type_of_batch[0]: ", type(batch[0]))
+        #print("Type_of_batch[0][0]: ", type(batch[0][0]))
 
         # print("Len_of_batch: ", len(batch))
         # print("Len_of_batch[0]: ", len(batch[0]))
@@ -104,8 +108,16 @@ class CollateDepthJointsBatch(object):
             return torch.stack([torch.from_numpy(s.value) for s in samples], 0)
           elif isinstance(samples[0], np.ndarray):
             return torch.stack([torch.from_numpy(s) for s in samples], 0)
+          elif isinstance(samples[0], int):
+            return torch.tensor(samples)
+          else:
+            raise NotImplementedError("Type %s to torch conversion is unimplemented." % type(samples[0]))
         
         
         # required to be long
         transposed = zip(*batch)
-        return [collate_h5py(samples) for samples in transposed]
+        data = tuple(collate_h5py(samples) for samples in transposed)
+
+        # new for action loading
+        
+        return (data[0] if self.inputs is 1 else data[:self.inputs]), (data[-1] if self.outputs is 1 else data[self.inputs:self.inputs+self.outputs])

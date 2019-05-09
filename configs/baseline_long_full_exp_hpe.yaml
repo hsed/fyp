@@ -2,6 +2,11 @@
 # better use fp (--force-pca) flag also the very next thing to do is try replacing new augmentation transforms or basically
 # all transforms with original transforms you made for msra.... and do rot+None and see if results are better...
 
+# predict_action: true
+# output_type: depth_joints_action
+# loss: mse_and_nll_loss
+# output_type: depth_action_joints
+
 name: BaselineHPE
 n_gpu: 1
 dtype: float
@@ -12,10 +17,12 @@ arch:
   type: DeepPriorPPModel
   args:
     input_channels: 1
+    action_cond_ver: 1 # 0 => no action cond, 1 => simple broadcast+concat (input_channel = 2),
     pca_components: 30
     dropout_prob: 0.3
     train_mode: true
     init_w: true
+    predict_action: false #true ## new
 
 
 data_loader:
@@ -30,7 +37,7 @@ data_loader:
     debug: false
     reduce: false
     preload_depth: false #true now this is not neede, after first epoch preloading is automatically done
-    pca_overwrite_cache: true #true
+    pca_overwrite_cache: false #true #true # set to false when u r not changing data aug everytime
     use_msra: false #true #false #true #false
     pca_size: 200000
     validation_split: -0.2 # -1.0 #0.2 #-1.0 #0.2 #-1.0
@@ -53,6 +60,7 @@ data_loader:
       #- 3
     use_orig_transformers: false #true #false #true # true
     use_orig_transformers_pca: false #true #false #true # true
+    output_type: depth_action_joints #depth_joints # 'depth_action_joints' 'depth_joints_action' #'depth_joints'
 
 
 optimizer:
@@ -61,7 +69,7 @@ optimizer:
     lr: 0.001
     weight_decay: 0
     amsgrad: false #true
-loss: mse_loss
+loss: mse_loss # mse_and_nll_loss #mse_loss
 metrics: [Avg3DError]
 lr_scheduler:
   # type: StepLR

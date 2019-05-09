@@ -928,6 +928,7 @@ class ToTuple(object):
         JOINTS_ACTION = 'joints_action'
         DEPTH_JOINTS = 'depth_joints'
         DEPTH_JOINTS_ACTION = 'depth_joints_action'
+        DEPTH_ACTION_JOINTS = 'depth_action_joints'
         DEPTH_JOINTS_DEBUG = 'depth_joints_debug'
 
 
@@ -968,6 +969,8 @@ class ToTuple(object):
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_DEBUG) \
             else (sample[DT.DEPTH], sample[DT.JOINTS], sample[DT.ACTION]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_ACTION) \
+            else (sample[DT.DEPTH], sample[DT.ACTION], sample[DT.JOINTS]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_ACTION_JOINTS) \
             else (sample[DT.DEPTH], sample[DT.JOINTS_ORIG_MM], sample[DT.COM_ORIG_MM]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_ORIG_JOINTS_ORIG_COM) \
             else None

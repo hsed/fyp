@@ -189,6 +189,7 @@ class DepthJointsDataLoader(BaseDataLoader):
                 test_mm_err=False,
                 use_pca_cache=True, pca_overwrite_cache=False, preload_depth=False,
                 use_msra=False, data_aug=None, pca_data_aug=None,
+                output_type = 'depth_joints', 
                 use_orig_transformers=False, use_orig_transformers_pca=False,
                 randomise_params=True, crop_depth_ver=0, pca_size=int(2e5),
                 crop_pad_3d=[30., 30., 100.], crop_pad_2d=[40, 40, 100.], cube_side_mm=190):
@@ -199,7 +200,21 @@ class DepthJointsDataLoader(BaseDataLoader):
             even without preloading
         '''
 
-        print('[DATALOADER] VAL_SPLIT => ', validation_split)
+        print('[DATALOADER] VAL_SPLIT => ', validation_split, 'OUTPUT_TYPE =>', output_type)
+
+        if validation_split == 0.0:
+            self.val_dataset = None
+
+        
+        if output_type == 'depth_joints':
+            in_out = (1,1)
+        elif output_type == 'depth_joints_action':
+            in_out = (1,2)
+        elif output_type == 'depth_action_joints':
+            in_out = (2,1)
+        else:
+            raise NotImplementedError("Output Type %s is undefined for HPE dataloader" % output_type)
+
 
         if reduce:
             num_workers = 0
@@ -274,7 +289,7 @@ class DepthJointsDataLoader(BaseDataLoader):
             DepthStandardiser(**trnsfrm_base_params),
             JointCentererStandardiser(**trnsfrm_base_params),
             pca_transformer,
-            ToTuple(extract_type='depth_joints')
+            ToTuple(extract_type=output_type)
         ]
 
         val_transform_list = train_transform_list.copy()
@@ -289,14 +304,14 @@ class DepthJointsDataLoader(BaseDataLoader):
                         transforms.Compose([
                             DeepPriorXYTransform(aug_mode_lst=train_aug_list),
                             pca_transformer,
-                            ToTuple(extract_type='depth_joints')
+                            ToTuple(extract_type=output_type)
                         ])
             
             val_transfrm = transforms.Compose(val_transform_list) if not use_orig_transformers else \
                             transforms.Compose([
                                                 DeepPriorXYTransform(aug_mode_lst=[AugType.AUG_NONE]),
                                                 pca_transformer,
-                                                ToTuple(extract_type='depth_joints')
+                                                ToTuple(extract_type=output_type)
                                             ])
         elif dataset_type == 'test':
             if test_mm_err:
@@ -309,7 +324,7 @@ class DepthJointsDataLoader(BaseDataLoader):
                                 DepthCropper(**trnsfrm_base_params),
                                 DepthStandardiser(**trnsfrm_base_params),
                                 JointCentererStandardiser(flatten_shape=False, **trnsfrm_base_params), #JointCenterer(**trnsfrm_base_params), #JointCentererStandardiser(flatten_shape=False, **trnsfrm_base_params),
-                                ToTuple(extract_type='depth_joints')
+                                ToTuple(extract_type=output_type)
                             ])
             else:
                 print("Testset target is pca output after centering and standardising...")
@@ -319,7 +334,7 @@ class DepthJointsDataLoader(BaseDataLoader):
                                 DepthStandardiser(**trnsfrm_base_params),
                                 JointCentererStandardiser(flatten_shape=True, **trnsfrm_base_params),
                                 pca_transformer,
-                                ToTuple(extract_type='depth_joints')
+                                ToTuple(extract_type=output_type)
                             ])
 
         
@@ -406,7 +421,7 @@ class DepthJointsDataLoader(BaseDataLoader):
         ## initialise super class appropriately
         super(DepthJointsDataLoader, self).\
             __init__(self.dataset, batch_size, shuffle, validation_split, num_workers,
-                     collate_fn=CollateDepthJointsBatch(),
+                     collate_fn=CollateDepthJointsBatch(*in_out),
                      val_dataset=self.val_dataset, randomise_params=randomise_params)# need to init collate fn
 
         if debug:

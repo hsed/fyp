@@ -194,13 +194,19 @@ class PCADecoderBlock(nn.Module):
 
 class DeepPriorPPModel(BaseModel): #nn.Module
     def __init__(self, input_channels=1, num_joints=21, num_dims=3, pca_components=30, dropout_prob=0.3,
-                 train_mode=True, weight_matx_np=None, bias_matx_np=None, init_w=True):
+                 train_mode=True, weight_matx_np=None, bias_matx_np=None, init_w=True, predict_action=False,
+                 action_classes=45, action_cond_ver=0):
         self.num_joints, self.num_dims = num_joints, num_dims
         self.train_mode = train_mode # when True output is PCA, else output is num_dims*num_joints
+        self.predict_action = predict_action
 
         super(DeepPriorPPModel, self).__init__()
         channelStages = [32, 64, 128, 256, 256]
         strideStages = [2, 2, 2, 1]
+        
+        # new action conditioning info
+        if action_cond_ver == 1:
+            input_channels += 1
 
         self.main_layers = nn.Sequential(OrderedDict([
             ('conv_pool_1', ConvPoolBlock(input_channels, channelStages[0],
@@ -227,6 +233,15 @@ class DeepPriorPPModel(BaseModel): #nn.Module
               apply_relu=False, dropout_prob=0.)),  # 0 dropout => no dropout layer to add
         ]))
 
+        ### add action layer but dont append to linear layers
+        ### predict_action
+        if self.predict_action:
+            # NEW
+            self.action_layer = nn.Sequential(OrderedDict([
+                ('lin', nn.Linear(in_features=pca_components, out_features=action_classes)),
+                ('softmax', nn.LogSoftmax(dim=1))
+            ]))
+
         ## back projection layer
         self.final_layer = PCADecoderBlock(num_joints=num_joints,
                                            num_dims=num_dims)
@@ -240,17 +255,40 @@ class DeepPriorPPModel(BaseModel): #nn.Module
 
     def forward(self, x):
         #x = x.float()   # cast to float,temp fix..., later whole shuld be float
+        #print('TEST DATA NEW: ', len(x), x[0].shape, x[1].shape)
+
+        # if isinstance(x, tuple):
+        #     ## new depth+action
+        #     ## both these elements are tensors but of different types
+        #     x, a = x # (dpt, action) in tuple
+        #     # quit()
+
+        #     ## a simple embedding methoddoesn't require long
+        #     ## if long is needed it should be back converted here,
+        #     ## long -> float -> long is safe for ints no data lost just a bit ineff
+        #     # [BATCH_SIZE] -> [BATCH_SIZE, 1, 1, 1] -> [BATCH_SIZE, 1, 128, 128]
+        #     a = a.unsqueeze(1).unsqueeze(1).unsqueeze(1).expand_as(x)
+
+            
+        #     dpt = x #[0] ##temp
+        #     act = a ##temp
+        #     x = torch.cat((x, a), 1)  # concat on channel axis -> [BATCH_SIZE, 2, 128, 128]
+        #     #print("X_SHAPE> ", x.shape, "A_SHAPE>> ", act.shape, "X_old.shape ", dpt.shape) ##temp
+
         x = self.main_layers(x)
         
         ## must convert x into (n_samples, 8*8*256 vector)
         x = x.view(-1, 8*8*256)
         x = self.linear_layers(x)
 
+        y = self.action_layer(x) if self.predict_action else None
         # usually people use self.training which is built in but in our case
         # that would lead to val returining y in keypoint space
         # rather than oca space
         # reshape (63,) -> (21, 3) done automatically
-        return x if self.train_mode else self.final_layer(x)
+        return \
+            (x if self.train_mode else self.final_layer(x)) if not self.predict_action \
+                else ((x, y) if self.train_mode else (self.final_layer(x), y))
     
     def forward_eval(self, x):
         ## use this function at evaluation i.e. testing

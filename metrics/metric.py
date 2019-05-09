@@ -52,6 +52,12 @@ class Avg3DError(object):
         '''
             Note: input is torch tensors
         '''
+
+        if isinstance(output, tuple) and isinstance(target, tuple):
+            # support for action tuple types
+            # basically only get the rgression based data_types not class info
+            output = output[0]
+            target = target[0]
         
         ## pca -> keypoint space
         ## this needs to be a torch decoder

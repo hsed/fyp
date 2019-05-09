@@ -94,18 +94,20 @@ class Trainer(BaseTrainer):
                 
                 self.optimizer.zero_grad()
 
-                target = target.to(self.device, self.target_dtype)
-                if isinstance(data, torch.Tensor):
-                    data = data.to(self.device, self.dtype)
-                    output = self.model(data)
-                elif isinstance(data, tuple):
-                    # if its not a tensor its probably a tuple
-                    # we expect model to handle tuple
-                    # we send it in similar fashion to *args
-                    data = tuple(sub_data.to(self.device, self.dtype) for sub_data in data)
-                    output = self.model(*data)
-                else:
-                    raise RuntimeError("Invalid Datatype")
+                target = self._tensor_to(target)
+                data = self._tensor_to(data)
+                output = self.model(data)
+                # if isinstance(data, torch.Tensor):
+                #     data = data.to(self.device, self.dtype)
+                #     output = self.model(data)
+                # elif isinstance(data, tuple):
+                #     # if its not a tensor its probably a tuple
+                #     # we expect model to handle tuple
+                #     # we send it in similar fashion to *args
+                #     data = tuple(sub_data.to(self.device, self.dtype) for sub_data in data)
+                #     output = self.model(*data)
+                # else:
+                #     raise RuntimeError("Invalid Datatype")
                 
                 loss = self.loss(output, target)
                 loss.backward()
@@ -170,22 +172,29 @@ class Trainer(BaseTrainer):
             for batch_idx, (data, target) in \
                 tqdm(enumerate(self.valid_data_loader), desc='Validate', total=len(self.valid_data_loader)):
                 
-                target = target.to(self.device, self.target_dtype)
+                # supports tuples and tensors
+                target = self._tensor_to(target)
 
                 self.optimizer.zero_grad()
 
-                if isinstance(data, torch.Tensor):
-                    data = data.to(self.device, self.dtype)
-                    output = self.model(data)
-                elif isinstance(data, tuple):
-                    # if its not a tensor its probably a tuple
-                    # we expect model to handle tuple
-                    # we send it in similar fashion to *args
-                    data = tuple(sub_data.to(self.device, self.dtype) for sub_data in data)
-                    output = self.model(*data)
-                else:
-                    raise RuntimeError("Invalid Datatype")
+                data = self._tensor_to(data)
+                
+                # no more tuple unwrapping, all unwrapping if required is done by loss fn
+                output = self.model(data)
 
+                # if isinstance(data, torch.Tensor):
+                #     data = data.to(self.device, self.dtype)
+                #     output = self.model(data)
+                # elif isinstance(data, tuple):
+                #     # if its not a tensor its probably a tuple
+                #     # we expect model to handle tuple
+                #     # we send it in similar fashion to *args
+                #     data = tuple(sub_data.to(self.device, self.dtype) for sub_data in data)
+                #     output = self.model(*data)
+                # else:
+                #     raise RuntimeError("Invalid Datatype")
+
+                # support for tuple type targets and outputs is implemented in the loss function itself.
                 loss = self.loss(output, target)
 
                 #self.writer.set_step((epoch - 1) * len(self.valid_data_loader) + batch_idx, 'valid')
@@ -206,3 +215,18 @@ class Trainer(BaseTrainer):
             self.writer.add_scalar(f'{metric.__name__}', metric_val)
 
         return log
+
+
+    def _tensor_to(self, data):
+        ## custom function
+        if isinstance(data, torch.Tensor):
+            data = data.to(self.device, self.dtype)
+            return data
+        elif isinstance(data, tuple):
+            # if its not a tensor its probably a tuple
+            # we expect model to handle tuple
+            # we send it in similar fashion to *args
+            data = tuple(sub_data.to(self.device, self.dtype) for sub_data in data)
+            return data
+        else:
+            raise RuntimeError("Invalid Datatype %s" % type(data))
