@@ -276,6 +276,7 @@ class DepthJointsDataLoader(BaseDataLoader):
         train_transform_list = [
             JointReshaper(**trnsfrm_base_params), # NOOP for MSRA
             DepthCropper(**trnsfrm_base_params),
+            ActionOneHotEncoder(action_classes=45, **trnsfrm_base_params)
         ]
 
         if data_aug is not None and isinstance(data_aug, list):

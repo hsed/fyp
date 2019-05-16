@@ -76,7 +76,8 @@ def debug():
         norm_dist = torch.distributions.normal.Normal(0, 1)
 
         ## for depth + action set input channels to 2 .. temp for now
-        hpe_baseline = DeepPriorPPModel(input_channels=1, predict_action=False, action_cond_ver=1)
+
+        hpe_baseline = DeepPriorPPModel(input_channels=1, predict_action=False, action_cond_ver=6) # 5 ; 3
         # inputs = norm_dist.sample((10, 2,128,128)) # 10 hand samples
         # targets = norm_dist.sample((10,30))
 
@@ -157,7 +158,7 @@ def debug():
 
         
         #print("Input Shape:", data.shape, " Output Shape:", target[0].shape, "Action shape", target[1].shape)
-        for _ in range(10):
+        for _ in range(10): #10
             output = hpe_baseline(data)
             optimizer.zero_grad()
             loss = criterion(output, target)

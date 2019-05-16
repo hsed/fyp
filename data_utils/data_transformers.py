@@ -486,14 +486,15 @@ class ActionOneHotEncoder(TransformerBase):
     '''
     def __init__(self, action_classes = 45, *args, **kwargs):
         super().__init__(*args, **kwargs) # initialise the super class
-        self.action_classes = action_classes
+        #self.action_classes = action_classes
+        self.eye = np.eye(action_classes)
 
     def __call__(self, sample):
-        action_idx = sample[DT.ACTION]
-        action_one_hot = np.zeros(self.action_classes)
-        action_one_hot[action_idx] = 1
+        #action_idx = sample[DT.ACTION]
+        #action_one_hot = np.zeros(self.action_classes)
+        #action_one_hot[action_idx] = 1
 
-        sample[DT.ACTION] = action_one_hot
+        sample[DT.ACTION] = self.eye[sample[DT.ACTION]]#action_one_hot
 
         return sample
 

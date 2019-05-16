@@ -7,6 +7,8 @@
 # loss: mse_and_nll_loss
 # output_type: depth_action_joints
 
+# action_cond: use 6 for final conditioning using one_hot class info and film layers; use 0 for no action.
+
 name: BaselineHPE
 n_gpu: 1
 dtype: float
@@ -17,12 +19,14 @@ arch:
   type: DeepPriorPPModel
   args:
     input_channels: 1
-    action_cond_ver: 1 # 0 => no action cond, 1 => simple broadcast+concat (input_channel = 2),
+    action_cond_ver: 6 # use 0 or 6 #5 #3 #2 # 0 => no action cond, 1 => simple broadcast+concat (input_channel = 2), #2 -> embed method with broadcast to x channels #3 -> nn.Linear method and onehot with broadcast to x channels 
+    dynamic_cond: false # true -> turn off after X epochs
     pca_components: 30
     dropout_prob: 0.3
     train_mode: true
     init_w: true
     predict_action: false #true ## new
+    res_blocks_per_group: 5 #6 # 5 -- orig
 
 
 data_loader:
