@@ -582,7 +582,11 @@ class DepthCropper(TransformerBase):
         ## if augmentation is called
         if dpt_crop is not None: sample[DT.DEPTH] = dpt_crop.astype(np.float32)
         sample[DT.CROP_TRANSF_MATX] = crop_transf_matx
-
+        sample[DT.DEPTH_CROP] = dpt_crop # for debugging in validation samples
+        sample[DT.DEPTH_CROP_AUG] = None # for debugging in validation samples
+        sample[DT.AUG_TRANSF_MATX] = None
+        sample[DT.AUG_MODE] = None
+        sample[DT.AUG_PARAMS] = None
         return sample
 
 
@@ -965,7 +969,9 @@ class ToTuple(object):
             else (sample[DT.DEPTH_ORIG], sample[DT.DEPTH_CROP], sample[DT.JOINTS_ORIG_PX], \
                   sample[DT.COM_ORIG_PX], sample[DT.CROP_TRANSF_MATX], \
                   None, sample[DT.DEPTH_CROP_AUG], sample[DT.AUG_TRANSF_MATX], \
-                  sample[DT.AUG_MODE], sample[DT.AUG_PARAMS]) \
+                  sample[DT.AUG_MODE], sample[DT.AUG_PARAMS], sample[DT.NAME], \
+                  sample[DT.COM_ORIG_MM], \
+                  (sample[DT.DEPTH], sample[DT.ACTION]), sample[DT.JOINTS]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_DEBUG) \
             else (sample[DT.DEPTH], sample[DT.JOINTS], sample[DT.ACTION]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_ACTION) \

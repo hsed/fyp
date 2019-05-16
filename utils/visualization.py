@@ -1,5 +1,5 @@
 import importlib
-
+from tensorboardX import SummaryWriter
 
 class WriterTensorboardX():
     def __init__(self, writer_dir, logger, enable):
@@ -15,7 +15,7 @@ class WriterTensorboardX():
         self.step = 0
         self.mode = ''
 
-        self.tensorboard_writer_ftns = ['add_scalar', 'add_scalars', 'add_image', 'add_audio', 'add_text', 'add_histogram', 'add_pr_curve', 'add_embedding']
+        self.tensorboard_writer_ftns = ['add_scalar', 'add_scalars', 'add_image', 'add_audio', 'add_text', 'add_histogram', 'add_pr_curve', 'add_embedding', 'add_figure']
 
     def set_step(self, step, mode='train'):
         self.mode = mode

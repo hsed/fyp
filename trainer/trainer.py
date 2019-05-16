@@ -6,6 +6,7 @@ from data_utils import PersistentDataLoader
 from metrics import Avg3DError
 from models import PCADecoderBlock
 from tqdm import tqdm
+from data_utils import plotImg
 
 class Trainer(BaseTrainer):
     """
@@ -138,8 +139,7 @@ class Trainer(BaseTrainer):
                     )
                     #self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
                 
-                #break # return after one batch
-        
+                #if self.data_loader.reduce: break # return after one batch
 
         log = {
             'loss': total_loss / len(self.data_loader),
@@ -202,6 +202,7 @@ class Trainer(BaseTrainer):
                 total_val_loss += loss.item()
                 total_val_metrics += self._eval_metrics(output, target)
                 #self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
+                #if self.data_loader.debug: break #for debugging
 
         log = {
             'val_loss': total_val_loss / len(self.valid_data_loader),
@@ -230,3 +231,60 @@ class Trainer(BaseTrainer):
             return data
         else:
             raise RuntimeError("Invalid Datatype %s" % type(data))
+    
+
+    def _predict_and_write_2D(self, sample_data , epoch , mm2pxfn):
+        '''
+            (sample[DT.DEPTH_ORIG], sample[DT.DEPTH_CROP], sample[DT.JOINTS_ORIG_PX], \
+            sample[DT.COM_ORIG_PX], sample[DT.CROP_TRANSF_MATX], \
+            None, sample[DT.DEPTH_CROP_AUG], sample[DT.AUG_TRANSF_MATX], \
+            sample[DT.AUG_MODE], sample[DT.AUG_PARAMS], sample[DT.COM_ORIG_MM], sample[DT.DEPTH], sample[DT.JOINTS])
+
+        '''
+        #print("WE PRED AND WRITE", self.metrics)
+        m_id = -1
+        for i, metric in enumerate(self.metrics):
+            if isinstance(metric, Avg3DError):
+                m_id = i
+                break
+
+        if m_id > -1:
+            #print("SAMPLE DATA LEN:", len(sample_data))
+            # now only works if input is of tuple type
+
+            x,y = self._tensor_to((torch.from_numpy(sample_data[-2][0]), torch.tensor([sample_data[-2][1]]))), \
+                  self._tensor_to(torch.from_numpy(sample_data[-1]))
+            x0,y = x[0].unsqueeze(0), y.unsqueeze(0) # input, target
+
+            y_ = self.model((x0, x[1])) # output
+            
+            #print("y_", y_.shape)
+            # all 3 are torch tensors!
+            error_3d, y_mm_, y_mm = self.metrics[m_id](y_, y, return_mm_data=True)
+
+            # all are tensors return 0d, 1,21,3; 1,21,3
+            #print("types: ", type(error_3d), type(y_mm_), type(y_mm), "shapes: ", error_3d.shape, y_mm_.shape, y_mm.shape)
+            
+            com_orig = sample_data[-3]
+            #print("PLOT DEBUG FILENAME: ", sample_data[-4])
+            #print("com_Shape", com_orig.shape)
+            
+
+            output_mm_uncentered = y_mm_.squeeze(0).detach().cpu().numpy() + com_orig
+            #print("out_mm_uncent", output_mm_uncentered.shape)
+            error_3d = error_3d.item() # extract value from 0d tensor
+
+            out_px = mm2pxfn(output_mm_uncentered)
+
+
+            fig = plotImg(*sample_data[:5], show_aug_plots=False, return_fig=True, keypt_pred_px=out_px, pred_err=error_3d)
+            #from matplotlib import pyplot as plt
+            #plt.figure(fig.number)
+            
+            #plt.show()
+            
+            self.writer.add_figure('sample_prediction', fig, epoch)
+
+            #exit()
+        else:
+            pass #print("AVG3DERROR NOT FOUND")

@@ -116,7 +116,7 @@ class HandPoseActionDataset(Dataset):
 
         self.RAND_SEED = 0 
 
-        
+        self.ignore_cache_for_hpe = False # 
         self._load()
 
         self.retrieve_depth = retrieve_depth
@@ -130,6 +130,9 @@ class HandPoseActionDataset(Dataset):
         ## bugs with this... 
         ## see https://discuss.pytorch.org/t/dataloader-when-num-worker-0-there-is-bug/25643/16
         self.depthmap_cachefile = None
+
+        #print("Names:")
+        #[print(name) for name in self.names[108:115]]
     
 
     def __getitem__(self, index):
@@ -137,11 +140,11 @@ class HandPoseActionDataset(Dataset):
         ## this function is called internally by pytorch whenever a new sample needs to
         ## be loaded.
         #depthmap = load_depthmap(self.names[index], self.img_width, self.img_height, self.max_depth)
-        # any depth to allow 16-it images as the depths are 16-bit here
+        # any depth to allow 16-it images as the depths are 16-bit here, use option to load from file here 
 
         ## need to do this here cause of bug
         if self.depthmap_cachefile is None and self.retrieve_depth is True \
-           and self.preload_depth is False:
+           and self.preload_depth is False and self.ignore_cache_for_hpe is False:
             self.depthmap_cachefile = h5py.File(self.depthmap_cachepath, 'r', libver='latest', swmr=True)
 
         if self.task_mode == TaskMode.HAR:
@@ -169,6 +172,8 @@ class HandPoseActionDataset(Dataset):
                 DT.JOINTS: self.joints_world[index], # 3d joints of the sample => R^{63}
                 DT.COM: self.coms_world[index], # => R^{3}
                 DT.DEPTH: None if self.retrieve_depth is False \
+                          else np.asarray(Image.open(self.names[index]), dtype=np.uint16) \
+                          if self.ignore_cache_for_hpe \
                           else self.depthmap_cachefile[self.num2str(0)][index] \
                           if self.preload_depth is False \
                           else self.depthmaps[index], #depthmap => R^{480 x 640}
@@ -232,9 +237,9 @@ class HandPoseActionDataset(Dataset):
                 # e.g. Subject_1/open_juice_bottle/2 0
                 self.names.append(
                     [os.path.join(self.video_dir, line, 'depth', img) for img in \
-                        os.listdir(
+                        sorted(os.listdir(
                             os.path.join(self.video_dir, line, 'depth')
-                        )
+                        ))
                     ]
                 )
 
@@ -259,11 +264,12 @@ class HandPoseActionDataset(Dataset):
             elif self.task_mode == TaskMode.HPE:
                 # add frame_wise
                 # we merge list with list of new items
+                # NEW: FIXED DIR LISTING WHICH CAUSED WRONG DEPTHMAPS ASSOCIATED WITH KEYPOINTS FROM TXT. NOW LIST IS SORTED
                 self.names += \
                     [os.path.join(self.video_dir, line, 'depth', img) for img in \
-                        os.listdir(
+                        sorted(os.listdir(
                             os.path.join(self.video_dir, line, 'depth')
-                        )
+                        ))
                     ]
 
                 new_joints_lst = \

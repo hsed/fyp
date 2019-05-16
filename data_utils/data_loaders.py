@@ -17,7 +17,7 @@ import time
 
 from tqdm import tqdm
 
-from copy import deepcopy
+from copy import deepcopy, copy
 
 from argparse import Namespace
 
@@ -232,7 +232,7 @@ class DepthJointsDataLoader(BaseDataLoader):
             if dataset_type == 'train':
                 # force pca override in train_mode
                 print("PCA overwritten in MSRA train mode!")
-                #pca_overwrite_cache = True#True # ensure correct cache is calculated
+                pca_overwrite_cache = True#True # ensure correct cache is calculated
 
         if use_orig_transformers:
             print("WARNING: Using Original Transformers, Only working with MSRA!")
@@ -416,6 +416,31 @@ class DepthJointsDataLoader(BaseDataLoader):
 
         self.params = trnsfrm_base_params
         self.params['pca_components'] = pca_components
+
+        #### new for debugging visually during training ####
+        if self.val_dataset is not None:
+            old_transform = self.val_dataset.transform
+            self.val_dataset.transform = None
+            self.val_dataset.ignore_cache_for_hpe = True
+            item = self.val_dataset[111]
+            self.val_dataset.transform = old_transform
+            self.val_dataset.ignore_cache_for_hpe = False
+
+            #self.debug_dataset = deepcopy(self.val_dataset)
+            new_transform = deepcopy(val_transfrm)
+            if isinstance(new_transform, transforms.Compose):
+                    # change ToTuple ExtractType
+                    new_transform.transforms[-1] = ToTuple(extract_type='depth_joints_debug')
+                    if isinstance(new_transform.transforms[1], DepthCropper):
+                        new_params = deepcopy(trnsfrm_base_params)
+                        del new_params['pca_components']
+                        new_params['crop_depth_ver'] = 1
+                        new_params['crop_pad'] = tuple([30., 30., 200.])
+                        new_transform.transforms[1] = DepthCropper(**new_params)
+                        self.mm2px_multi = new_transform.transforms[1].mm2px_multi # needed to plot output during training
+                        self.debug_data = new_transform(item) # only set if all is ok
+        else:
+            pass # do not create the attribute
         
 
         ## initialise super class appropriately

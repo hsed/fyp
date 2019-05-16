@@ -48,7 +48,7 @@ class Avg3DError(object):
         self.__name__ = 'avg_3d_err_mm'
         ##self.pca
 
-    def __call__(self, output, target):
+    def __call__(self, output, target, return_mm_data=False):
         '''
             Note: input is torch tensors
         '''
@@ -82,8 +82,10 @@ class Avg3DError(object):
 
         ## R^{21} == avg_err_across_joints ==> R
         avg_3D_err = avg_err_per_joint.mean()
-
-        if self.ret_avg_err_per_joint:
+        
+        if return_mm_data:
+            return avg_3D_err, output, target
+        elif self.ret_avg_err_per_joint:
             return avg_3D_err, avg_err_per_joint
         else:
             return avg_3D_err

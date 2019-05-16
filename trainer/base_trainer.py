@@ -62,17 +62,19 @@ class BaseTrainer:
 
         # if debug mode in dataloader then turn off tensorboardX
         if config['data_loader']['args']['debug']:
-            print("[TRAINER] Logging disabled due to train mode!")
+            print("[TRAINER] Logging disabled due to debug mode!")
             cfg_trainer['tensorboardX'] = False
 
         writer_dir = os.path.join(cfg_trainer['log_dir'], config['name'], start_time)
         self.writer = WriterTensorboardX(writer_dir, self.logger, cfg_trainer['tensorboardX'])
 
         # Save configuration file into checkpoint directory:
-        ensure_dir(self.checkpoint_dir)
-        config_save_path = os.path.join(self.checkpoint_dir, 'config.yaml')
-        with open(config_save_path, 'w') as handle:
-            yaml.dump(config, handle, sort_keys=False) # note sort keys only works with yaml >= 5.1
+        # new only do it if monitor is not off
+        if self.monitor is not 'off':
+            ensure_dir(self.checkpoint_dir)
+            config_save_path = os.path.join(self.checkpoint_dir, 'config.yaml')
+            with open(config_save_path, 'w') as handle:
+                yaml.dump(config, handle, sort_keys=False) # note sort keys only works with yaml >= 5.1
 
         if resume:
             self._resume_checkpoint(resume)
@@ -110,6 +112,15 @@ class BaseTrainer:
             if self.do_validation:
                 val_log = self._valid_epoch(epoch)
                 result = {**result, **val_log}
+            
+            if getattr(self.model, 'on_epoch_train', False):
+                self.model.on_epoch_train(epoch)
+
+            if getattr(self.data_loader, 'debug_data', False) and getattr(self.data_loader, 'mm2px_multi', False):
+                ### HARD CODED ID
+                #sample_id = 111
+                #print("WRITING NEW PIC>>")
+                self._predict_and_write_2D(self.data_loader.debug_data, epoch, self.data_loader.mm2px_multi)
 
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
