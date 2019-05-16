@@ -16,5 +16,9 @@ __pycache__/
 # saved files
 saved/
 
+
+#csv logs
+logs/CSV
+
 # ipynb checkpoints
 .ipynb_checkpoints/
