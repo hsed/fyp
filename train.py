@@ -86,6 +86,8 @@ if __name__ == '__main__':
                         help='[0,1,2,3]')
     parser.add_argument('-pda', '--pca-data-aug', default=None, nargs='+', type=int,
                         help='[0,1,2,3]')
+    parser.add_argument('-nl', '--no-log', action='store_true',
+                        help='turn off data logging and monitoring')
     args = parser.parse_args()
 
     if args.config:
@@ -110,5 +112,10 @@ if __name__ == '__main__':
         config['data_loader']['args']['data_aug'] = args.data_aug
     if args.pca_data_aug is not None:
         config['data_loader']['args']['pca_data_aug'] = args.pca_data_aug
+
+    if args.no_log:
+        print("[MAIN] Logging + saving disabled due to cmd flag!")
+        del config['trainer']['monitor'] # disable monitoring
+        config['trainer']['tensorboardX'] = False # disable logging
 
     main(config, args.resume)
