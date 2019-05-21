@@ -2,12 +2,13 @@ import numpy as np
 import torch
 import h5py
 
-from torch.nn.utils.rnn import pack_sequence
+from torch.nn.utils.rnn import pack_sequence, pad_packed_sequence
 from torch._six import int_classes
 
 class CollateJointsSeqBatch(object):
-    def __init__(self):
-        pass
+    def __init__(self, pad_sequence=False, max_pad_length=-1):
+        self.pad_sequence = pad_sequence
+        self.max_pad_length = max_pad_length # -1 or 100
 
     
     def __call__(self, batch):
@@ -38,7 +39,7 @@ class CollateJointsSeqBatch(object):
         # batch[i] --> ith (== item_idx) (input,output) tuple
         # batch[i][0] --> ith input
         # batch[i][1] --> ith output
-
+        ## this function is WRONG!! doesnt work with same sizes e.g. [3,3,5,5,7]
 
         sort_idx_asc = sorted(range(len(batch)), key=lambda item_idx: batch[item_idx][0].shape[0])
         
@@ -48,6 +49,7 @@ class CollateJointsSeqBatch(object):
 
         #print("Sorts::ASC::DESC\n", sort_idx_asc, sort_idx_desc)
 
+        #targets_sorted_asc = np.array([item[1] for item in batch])[ sort_idx_desc ]
         targets_sorted_asc = np.array([item[1] for item in batch])[ sort_idx_asc ]
 
         # NOTE: this is a non_numeric array of arrays!
@@ -63,13 +65,26 @@ class CollateJointsSeqBatch(object):
         # interesting point is that packed_seq support to so we can later convert to correct dtypes
         # if required e.g. double -> float
         packed_inputs = pack_sequence(list(inputs_sorted_desc))
+
         
         # required to be long
         seq_idx_arr = torch.from_numpy(seq_idx_arr.astype(np.int64))
 
         targets_sorted_asc = torch.from_numpy(targets_sorted_asc.astype(np.int64))#required to be long only in windows?
 
-        return ((packed_inputs, seq_idx_arr), targets_sorted_asc)
+        if self.pad_sequence:
+          'also pad the data'
+          #print("padding now")
+          total_length = None if (self.max_pad_length == -1 or seq_lengths_asc[-1] < self.max_pad_length) \
+                         else self.max_pad_length
+          # sequence idx array is now provided by this but need to do -1
+          padded_inputs, seq_idx_arr = pad_packed_sequence(packed_inputs, batch_first=True, total_length=total_length)
+          seq_idx_arr = seq_idx_arr - 1
+          #print("padded_shape: ", padded_inputs.shape)
+          return ((padded_inputs, seq_idx_arr), targets_sorted_asc)
+
+        else:
+          return ((packed_inputs, seq_idx_arr), targets_sorted_asc)
 
 
 

@@ -6,6 +6,7 @@ from datasets import BaseDataType
 # accuracy
 def top1_acc(output, target):
     with torch.no_grad():
+        target = target.long() if target.dim() == 1 else torch.argmax(target, dim=1).long()
         pred = torch.argmax(output, dim=1)
         assert pred.shape[0] == len(target)
         correct = 0
@@ -15,6 +16,7 @@ def top1_acc(output, target):
 # top-k accuracy
 def top3_acc(output, target, k=3):
     with torch.no_grad():
+        target = target.long() if target.dim() == 1 else torch.argmax(target, dim=1).long()
         pred = torch.topk(output, k, dim=1)[1]
         assert pred.shape[0] == len(target)
         correct = 0

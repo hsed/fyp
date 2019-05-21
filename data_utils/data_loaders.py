@@ -25,6 +25,26 @@ from argparse import Namespace
     __init__ will auto import all modules in this folder!
 '''
 
+def _create_pca_transforms(use_orig_transformers_pca=False, pca_data_aug=None, trnsfrm_base_params={}):
+    '''
+        copied over from hpe dataloader, need to delete redundant code there
+    '''
+    pca_trnsfrm_list = [JointReshaper(**trnsfrm_base_params), DepthCropper(**trnsfrm_base_params)]
+    if pca_data_aug is not None and isinstance(pca_data_aug, list):
+        pca_aug_list = list(map(lambda i: AugType(i), pca_data_aug))
+        pca_trnsfrm_list.append(
+            DepthAndJointsAugmenter(aug_mode_lst=pca_aug_list,**trnsfrm_base_params),
+        )
+        print("Using data augmentation %a for pca (if cache overwrite is true)..." % pca_aug_list)
+    pca_trnsfrm_list += [JointCentererStandardiser(**trnsfrm_base_params), ToTuple(extract_type='joints')]
+    
+    pca_trnsfrms = transforms.Compose(pca_trnsfrm_list) if not use_orig_transformers_pca else \
+                    transforms.Compose([
+                        DeepPriorYTransform(aug_mode_lst=pca_aug_list), # NOTE: this was set to train_aug_list all along!
+                        ToTuple(extract_type='joints')
+                    ])
+    return pca_trnsfrms
+
 def _check_pca(data_dir, pca_transformer, data_transforms,
                transform_base_params, y_pca_len=int(2e5), use_msra=False,
                randomise_params=True):
@@ -49,7 +69,7 @@ def _check_pca(data_dir, pca_transformer, data_transforms,
             #quit()
 
         else:
-            print("Info: Using FHAD for PCA...")
+            print("[PCA_CHECKER] Info: Using FHAD for PCA...")
             y_set = HandPoseActionDataset(data_dir, 'train', 'hpe',
                                         transform=data_transforms, reduce=False, retrieve_depth=False)
             # if not randomise_params:
@@ -134,6 +154,43 @@ class MnistDataLoader(BaseDataLoader):
 
 '''
 
+class DepthJointsActionSequenceDataLoader(BaseDataLoader):
+    '''
+        To load joints and actions of same batch_size but variable sequence length for joints
+        In future we somehow need to pack/pad sequences using 'pack_sequence'
+
+        Use validation_split to extract some samples for validation
+
+        Note val_split < 1 is currently unsupported / untested but will need to be done at some point!
+    '''
+
+    def __init__(self, data_dir, dataset_type, batch_size, shuffle, 
+                validation_split=0.0, num_workers=1, debug=False, reduce=False):
+
+        t = time.time()
+        #not needed atm as NLLloss needs only class idx
+        #ActionOneHotEncoder(action_classes=45)
+        trnsfrm = transforms.Compose([
+                                        JointSeqReshaper(),
+                                        JointSeqCentererStandardiser(),
+                                        ToTuple(extract_type='joints_action_seq')
+                                    ])
+        self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'har', transform=trnsfrm, reduce=reduce,
+                                             retrieve_depth=True)
+
+
+        ## initialise super class appropriately
+        super(DepthJointsActionSequenceDataLoader, self).\
+            __init__(self.dataset, batch_size, shuffle, validation_split, num_workers, 
+                     collate_fn=CollateJointsSeqBatch(pad_sequence=True))
+
+        if debug:
+            print("Data Loaded! Took: %0.2fs" % (time.time() - t))
+            test_sample = self.dataset[0]
+            print("Sample Final Shape: ", test_sample[0].shape, test_sample[1].shape)
+            print("Sample Final Values:\n", test_sample[0], "\n", test_sample[1])
+            print("Sample Joints_Std_MIN_MAX: ", test_sample[0].min(), test_sample[0].max())
+
 
 class JointsActionDataLoader(BaseDataLoader):
     '''
@@ -144,24 +201,86 @@ class JointsActionDataLoader(BaseDataLoader):
     '''
 
     def __init__(self, data_dir, dataset_type, batch_size, shuffle, 
-                validation_split=0.0, num_workers=1, debug=False, reduce=False):
+                validation_split=0.0, num_workers=1, debug=False, reduce=False, pad_sequence=False,
+                max_pad_length=-1, randomise_params=True, load_depth=False,
+                use_pca = False):
+        
+        trnsfrm_base_params = {
+            'num_joints': 21,
+            'world_dim': 3,
+            'cube_side_mm': 200,
+            'cam_intrinsics': FHADCameraIntrinsics,
+            'dep_params': DepthParameters,
+            'aug_lims': Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180),
+            'crop_depth_ver': 2, #crop_depth_ver,
+            'crop_pad': tuple([40, 40, 100.]), # tuple required for transformers, but yaml loads as list by def
+            'debug_mode': debug,
+        }
 
-        t = time.time()
+        #t = time.time()
         #not needed atm as NLLloss needs only class idx
         #ActionOneHotEncoder(action_classes=45)
-        trnsfrm = transforms.Compose([
-                                        JointReshaper(),
-                                        JointSeqCentererStandardiser(),
-                                        ToTuple(extract_type='joints_action_seq')
-                                    ])
-        self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'har', transform=trnsfrm, reduce=reduce,
-                                             retrieve_depth=False)
+        transform_list = [
+                            SequenceLimiter(max_length=max_pad_length, **trnsfrm_base_params),
+                            JointSeqReshaper(**trnsfrm_base_params)
+                        ]
+        transform_list += [
+                        DepthSeqCropper(**trnsfrm_base_params),
+                        DepthSeqStandardiser(**trnsfrm_base_params)
+                        ]  if load_depth else []
+        transform_list += [
+                            JointSeqCentererStandardiser(**trnsfrm_base_params),
+                            ToTuple(extract_type='joints_action_seq')
+                        ]
+        
+        if use_pca:
+            pca_components = 30 # don't change
+            pca_data_aug = None 
+            pca_size = 200000
+            use_pca_cache = True
+            pca_overwrite_cache = False
+            pca_transformer = PCASeqTransformer(n_components=pca_components,
+                                            use_cache=use_pca_cache,
+                                            overwrite_cache=pca_overwrite_cache)
+            transform_list.insert(-1, pca_transformer)
+            pca_trnsfrms = _create_pca_transforms(use_orig_transformers_pca=False, pca_data_aug=pca_data_aug, 
+                                        trnsfrm_base_params=trnsfrm_base_params)
+            self.pca_weights_np, self.pca_bias_np = _check_pca(data_dir, pca_transformer, pca_trnsfrms,
+                                                            trnsfrm_base_params, use_msra=False,
+                                                            y_pca_len=pca_size,
+                                                            randomise_params=randomise_params)
+            trnsfrm_base_params['pca_components'] = pca_components
 
+        trnsfrm = transforms.Compose(transform_list)        
+        # trnsfrm = transforms.Compose([
+        #                                 SequenceLimiter(max_length=max_pad_length),
+        #                                 JointSeqReshaper(),
+        #                                 JointSeqCentererStandardiser(),
+        #                                 ToTuple(extract_type='joints_action_seq')
+        #                             ])
+        self.dataset = HandPoseActionDataset(data_dir, 'train', 'har', transform=trnsfrm, reduce=reduce,
+                                             retrieve_depth=load_depth, preload_depth=False)
+
+        if validation_split > 0.0:
+            self.val_dataset = HandPoseActionDataset(data_dir, 'train', 'har',
+                                                transform=trnsfrm, reduce=reduce,
+                                                retrieve_depth=load_depth, preload_depth=False)
+        elif validation_split < 0.0:
+            print("[DATALOADER] Setting Val_Set as test dataset")
+            self.val_dataset = HandPoseActionDataset(data_dir, 'test', 'har',
+                                                transform=trnsfrm, reduce=reduce,
+                                                retrieve_depth=load_depth, preload_depth=False)
+        else:
+            self.val_dataset = None
+        
+
+        self.params = trnsfrm_base_params # for later lookups if needed
 
         ## initialise super class appropriately
         super(JointsActionDataLoader, self).\
             __init__(self.dataset, batch_size, shuffle, validation_split, num_workers, 
-                     collate_fn=CollateJointsSeqBatch())
+                     collate_fn=CollateJointsSeqBatch(pad_sequence=pad_sequence, max_pad_length=max_pad_length),
+                     val_dataset=self.val_dataset, randomise_params=randomise_params)
 
         if debug:
             print("Data Loaded! Took: %0.2fs" % (time.time() - t))
@@ -169,6 +288,12 @@ class JointsActionDataLoader(BaseDataLoader):
             print("Sample Final Shape: ", test_sample[0].shape, test_sample[1].shape)
             print("Sample Final Values:\n", test_sample[0], "\n", test_sample[1])
             print("Sample Joints_Std_MIN_MAX: ", test_sample[0].min(), test_sample[0].max())
+
+        if not self.randomise_params:
+            print('[DATALOADER] Setting torch manual seed...')
+            torch.manual_seed(getattr(self.dataset, 'RAND_SEED', 0))
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
 
 
 
@@ -457,7 +582,7 @@ class DepthJointsDataLoader(BaseDataLoader):
             print("Sample Final Values:\n", test_sample[0], "\n", test_sample[1])
             print("Sample Joints_Std_MIN_MAX: ", test_sample[0].min(), test_sample[0].max())
 
-
+        ## note it is better to do this at the end of base-class!
         if not self.randomise_params:
             print('[DATALOADER] Setting torch manual seed...')
             torch.manual_seed(getattr(self.dataset, 'RAND_SEED', 0))
@@ -471,12 +596,15 @@ class PersistentDataLoader(object):
         Data is extracted using an underlying dataloader y iterating over dataloader once
         and storing results to disk.
 
-        It helps cause for all subsequent epochs, data is readily available
+        It helps cause for all subsequent epochs, data is readily available // USeful for LSTM sequence learning
     '''
     
     def __init__(self, dataloader, load_on_init=True):
         '''
             Load on init => Load dataset as soon as class is initialised
+
+            Note: This dataloader is a wrapper and must be passed a final initialised dataloader object
+            Note 2: Validation is not handled automatically, simply create a new object of this class for valdataloader
         '''
         #self.verbose = verbose
         self.dataloader = dataloader

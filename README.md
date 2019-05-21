@@ -645,3 +645,20 @@ In future we will try to cleate a new class and add new data loaders that conver
 
 
 Full test set 60ep baseline: BaselineHPE/0417_1634
+
+
+
+using pca for action recognizer got 3% improvements in the full test data set vs not using pca
+using padded sequences accuraccy is quite bad tried with 80 and 100 as max length and still much worse than packed sequence
+
+### SEQ_IDX_ARRAY BUG
+NOTE: We found a bug whereby the seq_idx_array gives wrong results if we have two or more sequences of same length in the array
+we now (kind of) fix that by ignoring sequence index array and using a padding method for extracting outputs. This is shown in *BaselineLSTM/0519_1850* (with bug) VS **BaselineLSTM/0520_2314**. Note: Both have pca option but the latter has the seq_idx_array bug removed as well.
+
+however using lstm directly there is a way to get the outputs directly. this involves using the final hn value output from the lstm. this is exactly correct as well this was done in **BaselineLSTM/0521_0832** and comparing to **BaselineLSTM/0520_2314** they both are exactly the same.
+
+### UNROLLED LSTM Implementation
+I have tried several different ways to implement the unrolled lstm, the best one with the least obtrusive code is now a simple for loop working on padded sequences and then in the end like the fix for seq_idx_arr bug we simply use the .batch_sizes component from the padding method to gather the required outputs, testing from rolled/compact version we find that the forward pass differences are amounting to floating point errors of about 1e-5 for < 10EP but this slowly builds up to 1e-4 (< 20EP) and 1e-3 is probably the absolute limit within 100EP. So there are some differences. Overall in training its a lower bound to the exact method but in the end we got a close accuracy maximum of 0.7078 (unrolled@EP77) vs 0.7338 (compact@EP96) in top 1 validation accuracy on entire training set
+the use of unrolled lstm. around the same epoch range the unrolled version has accuraccy of 0.7002@EP96
+
+There are also major drops of accuracy @EP 38 & 45 to about ~30% but that is almost quickly recovered. The final implementation is **BaselineLSTM/0521_1048**

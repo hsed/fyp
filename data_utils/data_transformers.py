@@ -5,6 +5,7 @@ import ctypes
 
 from enum import IntEnum, Enum
 from argparse import Namespace
+from functools import reduce
 
 import cv2
 import torch
@@ -354,6 +355,26 @@ class JointCenterer(TransformerBase):
 
         return sample
 
+class SequenceLimiter(TransformerBase):
+    '''
+        Limit number of frames
+    '''
+    def __init__(self, max_length=100, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+        self.max_length = max_length
+
+    def __call__(self, sample):
+        if self.max_length < 0:
+            return sample  # bypass
+        else:
+            sample[DT.NAME_SEQ] = sample[DT.NAME_SEQ][:self.max_length]
+            sample[DT.JOINTS_SEQ] = sample[DT.JOINTS_SEQ][:self.max_length]
+            sample[DT.COM_SEQ] = sample[DT.COM_SEQ][:self.max_length]
+            sample[DT.DEPTH_SEQ] = sample[DT.DEPTH_SEQ] \
+                                if sample[DT.DEPTH_SEQ] is None \
+                                else sample[DT.DEPTH_SEQ][:self.max_length]
+            
+            return sample
 
 class JointSeqReshaper(TransformerBase):
     def __init__(self, *args, **kwargs):
@@ -591,13 +612,63 @@ class DepthCropper(TransformerBase):
         return sample
 
 
-class DepthSeqCropper(object):
+class DepthSeqCropper(TransformerBase):
     '''
         Apply crop to depth images
         If set in init, also return transform matrices for use with 2D pts
 
         In Depth_(seq) => Out Depth_(seq)_centered_cropped + Transform_Matrix_Crop_Seq
     '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+        self.depth_cropper = DepthCropper(*args, **kwargs) # for single depth
+    
+    def __call__(self, sample):
+        ## note everything is in sequences here...
+        ## need to call depth now as well...
+        # dpt_orig = sample[DT.DEPTH_SEQ]
+        # keypt_mm_orig = sample[DT.JOINTS_SEQ]
+        # com_mm_orig = sample[DT.COM_SEQ] 
+
+
+        transformed_gen = (
+            self.depth_cropper({DT.DEPTH: dpt, DT.JOINTS: keypt, DT.COM: com}) \
+            #{DT.DEPTH: dpt, DT.JOINTS: keypt, DT.COM: com} \
+                for (dpt, keypt, com) in zip(sample[DT.DEPTH_SEQ], sample[DT.JOINTS_SEQ], sample[DT.COM_SEQ])
+        )
+        
+        zipped = zip(*((cdict[DT.DEPTH], cdict[DT.JOINTS], cdict[DT.COM]) for cdict in transformed_gen))
+
+        sample[DT.DEPTH_SEQ] = np.stack(next(zipped))
+        sample[DT.JOINTS_SEQ] = np.stack(next(zipped)) # should be unchanged
+        sample[DT.COM_SEQ] = np.stack(next(zipped)) # should be unchanged
+        #print("T2: %fs" % (10e-9*(time.time_ns() - t)))
+        return sample
+
+
+        ### old code // slower!
+        #reduce(lambda dic, cdic: {'a': dic['a'] + [cdic['a']]}, l, {'a': []})
+
+        # list of dicts -> dict of lists
+        # curr_dict -> new item, acc_dict -> accumulator
+        #t = time.time_ns()
+        #init_dict = { key: [] for key in transformed_list[0].keys() }
+        #init_dict = { DT.DEPTH: [], DT.JOINTS: [], DT.COM: [] }
+        # transformed_dict = \
+        #     reduce(lambda acc_dict, curr_dict: {\
+        #             DT.DEPTH: acc_dict[DT.DEPTH] + [curr_dict[DT.DEPTH]],
+        #             DT.JOINTS: acc_dict[DT.JOINTS] + [curr_dict[DT.JOINTS]], 
+        #             DT.COM: acc_dict[DT.COM] + [curr_dict[DT.COM]],
+        #             },
+        #            transformed_list, init_dict)
+            # reduce(lambda acc_dict, curr_dict: {key: acc_dict[key] + [curr_dict[key]] for key in acc_dict.keys()},
+            #        transformed_list, init_dict)
+        
+        # np.stack(transformed_dict[DT.DEPTH])
+        # np.stack(transformed_dict[DT.JOINTS])
+        # np.stack(transformed_dict[DT.COM])
+
+        #quit()
 
 
 class DepthAndJointsAugmenter(TransformerBase):
@@ -746,6 +817,32 @@ class DepthStandardiser(TransformerBase):
           
         return sample
 
+class DepthSeqStandardiser(TransformerBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+
+    def __call__(self, sample):
+        dpt_range = self.crop_shape3D_mm[2]
+        
+        # slower method
+        # import time
+        # dpts=sample[DT.DEPTH_SEQ].copy()
+        # comzs=sample[DT.COM_SEQ].copy()[:, 2]
+        # t = time.time_ns()
+        # newcomzs = (comzs + (dpt_range / 2.)) # select z axis value only
+        # for i in range(dpts.shape[0]):
+        #     dpts[i][(dpts == 0)[i]] = newcomzs[i]
+        # dpts -= comzs[:, np.newaxis, np.newaxis]
+        # dpts /= (comzs[:, np.newaxis, np.newaxis] / 2.)
+        # print("T1: %fs" % (10e-9*(time.time_ns() - t)))
+        
+        #t = time.time_ns()
+        sample[DT.DEPTH_SEQ] = \
+            np.stack(standardiseImg(dpt, com_z[2], dpt_range) \
+                for (dpt, com_z) in zip(sample[DT.DEPTH_SEQ], sample[DT.COM_SEQ]))
+        #print("T2: %fs" % (10e-9*(time.time_ns() - t)))
+        return sample
 
 class PCATransformer(TransformerBase):
     '''
@@ -826,10 +923,10 @@ class PCATransformer(TransformerBase):
 
             self.transform_matrix_np = shared_array
             self.mean_vect_np = shared_array2
-            print("Info: PCA loaded from cachefile %s." % cache_file)
+            print("[PCA_TRANSFORMER] Info: PCA loaded from cachefile %s." % cache_file)
         else:
             # handles both no file and no cache dir
-            Warning("PCA cache file not found, a new one will be created after PCA calc.")
+            Warning("[PCA_TRANSFORMER] PCA cache file not found, a new one will be created after PCA calc.")
             self.overwrite_cache = True # to ensure new pca matx is saved after calc
     
     def _save_cache(self):
@@ -908,6 +1005,20 @@ class PCATransformer(TransformerBase):
         # note fit if given return_X_no_mean returns X_no_mean_Torch
         return np.matmul(self.fit(X, return_X_no_mean=True).numpy(), self.transform_matrix_np.T)
 
+
+class PCASeqTransformer(PCATransformer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    # all other methods directly use base methods
+    
+    def __call__(self, sample):
+        #sample[DT.JOINTS]
+        sample[DT.JOINTS_SEQ] = \
+            np.stack(super(PCASeqTransformer, self).__call__({DT.JOINTS: joints})[DT.JOINTS] for joints in sample[DT.JOINTS_SEQ])
+        # this will be extended  by child
+        # basically we need to call some sort of np.stack but maybe it can be done in a better way?
+        return sample
 
 class ToTuple(object):
     '''
