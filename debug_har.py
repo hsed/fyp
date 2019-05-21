@@ -37,6 +37,7 @@ def debug():
     with elapsed_timer() as elapsed:
         use_pca = False
         load_depth = False
+        pad_seq = True
         ### note this stuff is meant to be wrapped by data loader class!!
         train_loader = JointsActionDataLoader(
                                                 data_dir='datasets/hand_pose_action',
@@ -47,7 +48,7 @@ def debug():
                                                 num_workers=0,
                                                 debug=False,
                                                 reduce=True,
-                                                pad_sequence=False,# True
+                                                pad_sequence=pad_seq,# True
                                                 max_pad_length=-1, # 100,
                                                 load_depth=load_depth, #False,
                                                 randomise_params=False,
@@ -60,7 +61,7 @@ def debug():
                                             num_lstm_units_per_layer=100,
                                             num_hidden_layers=1,
                                             lstm_dropout_prob=0.2,
-                                            use_unrolled_lstm=True#False#True
+                                            use_unrolled_lstm=False#True#False#True
                                         )
         
         
@@ -76,19 +77,20 @@ def debug():
         #     (np.random.randn(i, in_dim), j) for i,j in zip([3, 3, 5, 5, 7], [0,1,2,3,4])
         # ]
 
-        coll = CollateJointsSeqBatch()
+        coll = CollateJointsSeqBatch(pad_sequence=pad_seq)
         out, target = coll(sample_input_seq)
 
-        # this is for sorting in ascending order
-        sample_input_seq = [torch.from_numpy(item[0]) for item in sample_input_seq]
-        sample_input_seq.sort(key=lambda a: a.shape[0], reverse=True)
+        ### unneeded now
+        # # this is for sorting in ascending order
+        # sample_input_seq = [torch.from_numpy(item[0]) for item in sample_input_seq]
+        # sample_input_seq.sort(key=lambda a: a.shape[0], reverse=True)
         
-        sample_packed_seq, seq_idx_arr = out
-        assert torch.allclose(sample_packed_seq[0][seq_idx_arr[0]], sample_input_seq[-1][-1])
-        assert torch.allclose(sample_packed_seq[0][seq_idx_arr[1]], sample_input_seq[-2][-1])
-        assert torch.allclose(sample_packed_seq[0][seq_idx_arr[len(seq_idx_arr)-1]], sample_input_seq[0][-1])
+        # sample_packed_seq, seq_idx_arr = out
+        # assert torch.allclose(sample_packed_seq[0][seq_idx_arr[0]], sample_input_seq[-1][-1])
+        # assert torch.allclose(sample_packed_seq[0][seq_idx_arr[1]], sample_input_seq[-2][-1])
+        # assert torch.allclose(sample_packed_seq[0][seq_idx_arr[len(seq_idx_arr)-1]], sample_input_seq[0][-1])
 
-        out = tuple(item.to(torch.device('cpu'), torch.float) for item in out)
+        out = out.to(torch.device('cpu'), torch.float) if isinstance(out, torch.nn.utils.rnn.PackedSequence) else tuple(item.to(torch.device('cpu'), torch.float) for item in out)
 
         outputs = lstm_baseline(out)
         print("Output: ", outputs.shape)

@@ -58,33 +58,28 @@ class CollateJointsSeqBatch(object):
         # temporary conversion to np.array of tensors for sorting
         inputs_sorted_desc = list(np.array([torch.from_numpy(item[0]) for item in batch], dtype='O')[ sort_idx_desc ])
 
-        seq_lengths_asc = np.flipud([s.shape[0] for s in inputs_sorted_desc])
+        #seq_lengths_asc = np.flipud([s.shape[0] for s in inputs_sorted_desc])
 
-        seq_idx_arr = np.cumsum(np.append(seq_lengths_asc[0],np.diff(seq_lengths_asc))*np.arange(seq_lengths_asc.shape[0], 0, -1))-1
+        #seq_idx_arr = np.cumsum(np.append(seq_lengths_asc[0],np.diff(seq_lengths_asc))*np.arange(seq_lengths_asc.shape[0], 0, -1))-1
         
         # interesting point is that packed_seq support to so we can later convert to correct dtypes
         # if required e.g. double -> float
         packed_inputs = pack_sequence(list(inputs_sorted_desc))
-
-        
-        # required to be long
-        seq_idx_arr = torch.from_numpy(seq_idx_arr.astype(np.int64))
 
         targets_sorted_asc = torch.from_numpy(targets_sorted_asc.astype(np.int64))#required to be long only in windows?
 
         if self.pad_sequence:
           'also pad the data'
           #print("padding now")
-          total_length = None if (self.max_pad_length == -1 or seq_lengths_asc[-1] < self.max_pad_length) \
+          total_length = None if (self.max_pad_length == -1 or inputs_sorted_desc[0].shape[0] < self.max_pad_length) \
                          else self.max_pad_length
           # sequence idx array is now provided by this but need to do -1
-          padded_inputs, seq_idx_arr = pad_packed_sequence(packed_inputs, batch_first=True, total_length=total_length)
-          seq_idx_arr = seq_idx_arr - 1
+          padded_inputs, batch_sizes = pad_packed_sequence(packed_inputs, batch_first=True, total_length=total_length)
           #print("padded_shape: ", padded_inputs.shape)
-          return ((padded_inputs, seq_idx_arr), targets_sorted_asc)
+          return ((padded_inputs, batch_sizes), targets_sorted_asc)
 
         else:
-          return ((packed_inputs, seq_idx_arr), targets_sorted_asc)
+          return (packed_inputs, targets_sorted_asc)
 
 
 
