@@ -56,11 +56,18 @@ class BaselineHARModel(BaseModel):
         self.main_layers = nn.LSTM(input_size=in_frame_dim, hidden_size=100,
                                    num_layers=num_hidden_layers, dropout=lstm_dropout_prob,
                                    batch_first=True)
+        
 
         self.output_layers = nn.Sequential(OrderedDict([
             ('lin', nn.Linear(in_features=num_lstm_units_per_layer, out_features=out_dim)),
             ('softmax', nn.LogSoftmax(dim=1))
         ]))
+
+        # api for compatibility
+        self.recurrent_layers = self.main_layers
+        self.num_recurrent_layers = self.num_lstm_layers
+        self.recurrent_layers_dim = self.lstm_layer_dim
+        self.action_layers = self.output_layers
 
         self.use_unrolled_lstm = use_unrolled_lstm
 
@@ -71,26 +78,21 @@ class BaselineHARModel(BaseModel):
 
         if not self.use_unrolled_lstm:
             # outputs will be padded if x will be padded --- in this case vlens is not none
+            #print(type(x), x.shape)
             outputs, (hn, cn) = self.main_layers(x)
             
-            final_output_batch = hn.squeeze(0).flip(dims=(0,)) if vlens is None else \
+            # https://discuss.pytorch.org/t/how-to-get-the-output-at-the-last-timestep-for-batched-sequences/12057/4
+            # https://github.com/HarshTrivedi/packing-unpacking-pytorch-minimal-tutorial
+            # .flip(dims=(0,))
+            final_output_batch = hn.squeeze(0) if vlens is None else \
                                  outputs.gather(1, (vlens-1).to(outputs.device)\
                                                             .unsqueeze(1).unsqueeze(2)\
                                                             .expand(-1,-1,outputs.shape[2]))\
-                                                            .squeeze(1).flip(dims=(0,))
-            # aaa = self.forward_unrolled((x,seq_idx_arr))
-            # padded_outputs, vlens = pad_packed_sequence(outputs, batch_first=True)
-            # #vlens.device = padded_outputs.device
-            # #print("padded_out_device:", padded_outputs.device, vlens.device)
-            # #https://discuss.pytorch.org/t/how-to-get-the-output-at-the-last-timestep-for-batched-sequences/12057/4
-            # #https://github.com/HarshTrivedi/packing-unpacking-pytorch-minimal-tutorial
-            # final_output_batch = padded_outputs.gather(1, (vlens-1).to(padded_outputs.device)\
-            #                                                        .unsqueeze(1).unsqueeze(2)\
-            #                                                        .expand(-1,-1,padded_outputs.shape[2]))\
-            #                                                        .squeeze(1).flip(dims=(0,))
-
-            # if not torch.allclose(aaa, final_output_batch, atol=1e-3):
-            #     print("seq_idx_arr", seq_idx_arr)
+                                                            .squeeze(1)#.flip(dims=(0,))
+            
+            # for debugging -- comment when not needed
+            # aaa = self.forward_unrolled(x,vlens)
+            # if not torch.allclose(aaa, final_output_batch, atol=1e-3): # 1e-4 bad, 1e-5 bad
             #     print("batch_sizes:", x.batch_sizes)
             #     print('outs\n', final_output_batch[:, :10])
             #     print('h_ns\n', aaa[:, :10])
@@ -122,5 +124,5 @@ class BaselineHARModel(BaseModel):
         final_output_batch = padded_outputs.gather(1, (vlens-1).to(padded_outputs.device)\
                                                                .unsqueeze(1).unsqueeze(2)\
                                                                .expand(-1,-1,padded_outputs.shape[2]))\
-                                                               .squeeze(1).flip(dims=(0,))
+                                                               .squeeze(1)#.flip(dims=(0,))
         return final_output_batch

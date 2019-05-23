@@ -1,0 +1,87 @@
+# Purpose and scopes of model:
+
+# 0) use packed sequence always
+# 1) Train on GT Keypoints (or PCA Embeddings of GT Keypoints) and GT Action. do this is a loop fashion using
+# packed. check if this is same as baseline.
+# 2) Train on GT Keypoints (or PCA Embeddings of GT Keypoints) and GT Action.
+# Test on predicted keypoints (or pca embeddings of predicted keypoints) using a mapping from a pre-train HPE
+# and then pass these to current trained model to predict action. this is pretrained method should show improvements to (3)
+# 3) Train on GT Depthmaps to low-dim embeddings (30) or same size as keypoints (63) and then followed by lstm try both
+# embedding cases, no keypoint signal or side-information, this should be worse than 2 on action accuracy
+# 3) Try simple extension of 2 which uses pre-trained model followed by end-to-end training of fewer layers no feedback information
+# 4) Allows from feedback of depth images.
+
+# To use test on pre-train hpe and har set num epochs to 0 and presave to true...
+
+# forward_type in data loader
+# forward_type in model
+# Avg3DError model
+
+name: BaselineCombined # for use with tensorboard
+n_gpu: 1
+dtype: float
+target_dtype: long
+arch:
+  type: CombinedModel
+  args:
+    hpe_checkpoint: 'saved/BaselineHPE/0522_1047/model_best.pth' #'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
+    har_checkpoint: 'saved/BaselineLSTM/0521_1837/model_best.pth' #'saved/BaselineLSTM/0521_1300/model_best.pth' #1346 # this is the manual loop (unrolled) version; for rolled/compact version use 1346 (padding better) or 1300 (no padding)
+    pca_checkpoint:
+    hpe_args:
+      input_channels: 1
+      action_cond_ver: 0 # use 0 or 6 => no action cond, 6 => best action cond using film 
+      dynamic_cond: false # true -> turn off after X epochs
+      pca_components: 30
+      dropout_prob: 0.3
+      train_mode: true
+      init_w: true
+      predict_action: false #true ## new
+      res_blocks_per_group: 5 # 5 -- orig
+    har_args:
+      in_frame_dim: 30 # 63 # use 30 if using pca!
+      num_hidden_layers: 1
+      use_unrolled_lstm: true #false #true # true # true: about 14x slower
+    forward_type: 0 #0 #3 # 0: Combined (? -> (KeyPts, Action)); 1: HPE ((Depth,[Action]) -> KeyPts); 2: HAR (Depth -> Action); 3: HAR (KeyPts -> Action)
+    combined_version: 0 # used with forward_type == 0
+data_loader:
+  type: CombinedDataLoader
+  args:
+    data_dir: datasets/hand_pose_action
+    dataset_type: train
+    batch_size: 4
+    shuffle: true
+    validation_split: -0.2 #-1.0 #-0.2 # -1.0 -- use this for full test set training # need to change this to -1.0 to test properly in future!
+    num_workers: 8
+    pad_sequence: false # set to false to make it easier for loss to be applied element-wise
+    max_pad_length: -1 #100 #-1 #100
+    randomise_params: false
+    use_pca: true # false
+    debug: false
+    forward_type: 0 #3 #0 # 3
+optimizer:
+  type: Adam
+  args:
+    lr: 0.001
+    weight_decay: 0
+    amsgrad: true # note true is good for lstm but bad for hpe
+loss: mse_seq_and_nll_loss #nll_loss
+metrics:
+- top1_acc
+- top3_acc
+- Avg3DError # ONLY USE THIS IF FORWARD TYPE IS 0 FOR EVERYTHING ELSE REMOVE
+lr_scheduler:
+  type: StepLR
+  args:
+    step_size: 50
+    gamma: 0.1
+trainer:
+  epochs: 30 # 100 -- use this when val split == -1.0
+  save_dir: saved/
+  save_period: 500
+  verbosity: 2
+  persistent_storage: true #false #true # false # this is very helpful when also loading depth images
+  #monitor: max val_top1_acc
+  early_stop: 20 # 30 -- use this when val split == -1.0 #
+  tensorboardX: true
+  only_save: true #false # true, only do this for when saving the trivial baseline and quit() must quit cause optimiser is at weird state
+  log_dir: logs

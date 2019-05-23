@@ -5,6 +5,9 @@ from datasets import BaseDataType
 
 # accuracy
 def top1_acc(output, target):
+    # always assumed that predicts or action classes are the last element of either tuple
+    output = output[-1] if isinstance(output, tuple) else output
+    target = target[-1] if isinstance(target, tuple) else target
     with torch.no_grad():
         target = target.long() if target.dim() == 1 else torch.argmax(target, dim=1).long()
         pred = torch.argmax(output, dim=1)
@@ -15,6 +18,8 @@ def top1_acc(output, target):
 
 # top-k accuracy
 def top3_acc(output, target, k=3):
+    output = output[-1] if isinstance(output, tuple) else output
+    target = target[-1] if isinstance(target, tuple) else target
     with torch.no_grad():
         target = target.long() if target.dim() == 1 else torch.argmax(target, dim=1).long()
         pred = torch.topk(output, k, dim=1)[1]
@@ -58,8 +63,9 @@ class Avg3DError(object):
         if isinstance(output, tuple) and isinstance(target, tuple):
             # support for action tuple types
             # basically only get the rgression based data_types not class info
-            output = output[0]
-            target = target[0]
+            # we now also support output of being PackedSequence type in which case simply extract data element
+            output = output[0] if not isinstance(output[0], PackedSequence) else output[0].data
+            target = target[0] if not isinstance(target[0], PackedSequence) else target[0].data
         
         ## pca -> keypoint space
         ## this needs to be a torch decoder

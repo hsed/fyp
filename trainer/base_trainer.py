@@ -38,6 +38,7 @@ class BaseTrainer:
         self.save_period = cfg_trainer['save_period']
         self.verbosity = cfg_trainer['verbosity']
         self.monitor = cfg_trainer.get('monitor', 'off')
+        self.only_save = cfg_trainer.get('only_save', False)
 
         # configuration to monitor model performance and save best
         if self.monitor == 'off':
@@ -72,12 +73,22 @@ class BaseTrainer:
         # new only do it if monitor is not off
         if self.monitor is not 'off':
             ensure_dir(self.checkpoint_dir)
-            config_save_path = os.path.join(self.checkpoint_dir, 'config.yaml')
-            with open(config_save_path, 'w') as handle:
-                yaml.dump(config, handle, sort_keys=False) # note sort keys only works with yaml >= 5.1
+            self._save_config()
+        
+        ### either perform resuming, see if presave is true, if so save the current state, this is useful for
+        ### for special models that require saving but no training e.g. the combined trivial baseline.
+        ### both are kept mutually exclusive to prevent unneccessary saving
 
         if resume:
             self._resume_checkpoint(resume)
+        elif self.only_save:
+            # mutually exclusive to resume
+            print('[TRAINER] Performing pre-save of model and exiting...')
+            ensure_dir(self.checkpoint_dir) # call this to ensure directories are created accordingly
+            self._save_config()
+            self._save_checkpoint(1, save_best=True)
+            quit()
+
         
         ### add useful info to writer
         config_str = yaml.dump(config).replace('\n','<br/>').replace(' ', '&nbsp;')
@@ -139,7 +150,7 @@ class BaseTrainer:
             if self.train_logger is not None:
                 self.train_logger.add_entry(log)
                 if self.verbosity >= 1:
-                    log_str = ''.join(['{:5s}: {:.4f}\t'.format(str(key).capitalize(), value) for key,value in  log.items()])
+                    log_str = ''.join(['{:4s}: {:.2f} | '.format(str(key).capitalize(), value) for key,value in  log.items()])
                     self.logger.info(log_str)
 
             # evaluate model performance according to configured metric, save best checkpoint as model_best
@@ -244,3 +255,8 @@ class BaseTrainer:
     
         self.train_logger = checkpoint['logger']
         self.logger.info("Checkpoint '{}' (epoch {}) loaded".format(resume_path, self.start_epoch))
+    
+    def _save_config(self):
+        config_save_path = os.path.join(self.checkpoint_dir, 'config.yaml')
+        with open(config_save_path, 'w') as handle:
+            yaml.dump(self.config, handle, sort_keys=False) # note sort keys only works with yaml >= 5.1

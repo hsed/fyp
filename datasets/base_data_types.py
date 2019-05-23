@@ -18,6 +18,7 @@ class BaseDataType(IntEnum):
     JOINTS_SEQ = 6
     COM_SEQ = 7
     NAME_SEQ = 8
+    ACTION_SEQ = 9
 
 @unique 
 class TransformDataType(IntEnum):

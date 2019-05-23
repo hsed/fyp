@@ -52,11 +52,12 @@ def main(config, resume):
     loss = getattr(module_loss, config['loss'])
     metrics = [getattr(module_metric, met) for met in config['metrics']]
 
-    print("[NEW] METRICS: ", metrics)
+    print("METRICS: ", metrics)
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = get_instance(torch.optim, 'optimizer', config, trainable_params)
+    optimizer = get_instance(torch.optim, 'optimizer', config, trainable_params) \
+                                        if not config['trainer'].get('only_save', False) else torch.optim.Adam([torch.tensor([1,2,3])])
     #lr_scheduler = get_instance(torch.optim.lr_scheduler, 'lr_scheduler', config, optimizer) TODO: Enable later..
 
     print("\n=> Building trainer...")
@@ -115,7 +116,8 @@ if __name__ == '__main__':
 
     if args.no_log:
         print("[MAIN] Logging + saving disabled due to cmd flag!")
-        del config['trainer']['monitor'] # disable monitoring
+        if 'monitor' in config['trainer']:
+            del config['trainer']['monitor'] # disable monitoring
         config['trainer']['tensorboardX'] = False # disable logging
 
     main(config, args.resume)

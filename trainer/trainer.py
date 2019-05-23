@@ -133,7 +133,7 @@ class Trainer(BaseTrainer):
                     tqdm_pbar.set_description('Train [Epoch: {}/{}] [Sample: {}/{}] [Loss: {:.4f}]'.format(
                         epoch,
                         self.epochs,
-                        batch_idx * self.data_loader.batch_size,
+                        (batch_idx+1) * self.data_loader.batch_size,
                         self.data_loader.n_samples, ##100.0 * batch_idx / len(self.data_loader),
                         loss.item())
                     )
@@ -220,7 +220,9 @@ class Trainer(BaseTrainer):
 
     def _tensor_to(self, data):
         ## custom function
-        if isinstance(data, torch.Tensor):
+        ## note packed sequence is also of type tuple so its a special case which raises errors
+        ## code here is an attempt to fix it
+        if isinstance(data, torch.Tensor) or isinstance(data, torch.nn.utils.rnn.PackedSequence):
             data = data.to(self.device, self.dtype)
             return data
         elif isinstance(data, tuple):
