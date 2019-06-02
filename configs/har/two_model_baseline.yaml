@@ -1,0 +1,62 @@
+# Purpose and scopes of model:
+
+# 0) use packed sequence always
+# 1) Train on GT Keypoints (or PCA Embeddings of GT Keypoints) and GT Action. do this is a loop fashion using
+# packed. check if this is same as baseline.
+# 2) Train on GT Keypoints (or PCA Embeddings of GT Keypoints) and GT Action.
+# Test on predicted keypoints (or pca embeddings of predicted keypoints) using a mapping from a pre-train HPE
+# and then pass these to current trained model to predict action. this is pretrained method should show improvements to (3)
+# 3) Train on GT Depthmaps to low-dim embeddings (30) or same size as keypoints (63) and then followed by lstm try both
+# embedding cases, no keypoint signal or side-information, this should be worse than 2 on action accuracy
+# 3) Try simple extension of 2 which uses pre-trained model followed by end-to-end training of fewer layers no feedback information
+# 4) Allows from feedback of depth images.
+
+name: BaselineLSTM
+n_gpu: 1
+dtype: float
+arch:
+  type: BaselineHARModel
+  args:
+    in_frame_dim: 30 # 63 # use 30 if using pca!
+    num_hidden_layers: 1
+    use_unrolled_lstm: True #False #True # new
+data_loader:
+  type: JointsActionDataLoader
+  args:
+    data_dir: datasets/hand_pose_action
+    dataset_type: train
+    batch_size: 4
+    shuffle: true
+    validation_split: -1.0 #-0.2 #-1.0
+    num_workers: 8
+    pad_sequence: false #true
+    max_pad_length: -1 #100 #-1 #100
+    randomise_params: false
+    load_depth: false #true # false
+    use_pca: true # false
+    debug: false
+optimizer:
+  type: Adam
+  args:
+    lr: 0.001
+    weight_decay: 0
+    amsgrad: true # note true is good for lstm but bad for hpe
+loss: nll_loss
+metrics:
+- top1_acc
+- top3_acc
+lr_scheduler:
+  type: StepLR
+  args:
+    step_size: 50
+    gamma: 0.1
+trainer:
+  epochs: 100 #30 # 100
+  save_dir: saved/
+  save_period: 500
+  verbosity: 2
+  persistent_storage: true # false # this is very helpful when also loading depth images
+  monitor: max val_top1_acc
+  early_stop: 30 #20 # 30
+  tensorboardX: true
+  log_dir: logs

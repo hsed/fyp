@@ -1,50 +1,51 @@
 name: BaselineLSTM
 n_gpu: 1
 dtype: float
-target_dtype: long
 arch:
   type: BaselineHARModel
   args:
-    in_frame_dim: 30 # 63 # use 30 if using pca!
+    in_frame_dim: 63 #30 # 63 # use 30 if using pca!
     num_hidden_layers: 1
-    use_unrolled_lstm: true #false #true # new # true: about 14x slower
+    use_unrolled_lstm: false #false #false #true #false #true #false #true # new # true: about 14x slower
 data_loader:
   type: JointsActionDataLoader
   args:
     data_dir: datasets/hand_pose_action
     dataset_type: train
-    batch_size: 4
+    batch_size: 20 #4
     shuffle: true
-    validation_split: -0.2 #-1.0
+    validation_split: -1.0 #-0.2 #-1.0
     num_workers: 8
-    pad_sequence: true #false #true # padding always occur in unrolled version
-    max_pad_length: -1 #100 #-1 #100
+    pad_sequence: true #false #true #false #true # padding always occur in unrolled version
+    max_pad_length: 120 #300 #120 #300 #150 #-1 #100 #-1 #100
     randomise_params: false
     load_depth: false #true # false
-    use_pca: true # false
+    use_pca: false #true # false
     debug: false
+    use_wrist_com: false #true #false #true # false
+    norm_keypt_dist: false
 optimizer:
   type: Adam
   args:
-    lr: 0.001
+    lr: 0.003 # 0.001
     weight_decay: 0
     amsgrad: true # note true is good for lstm but bad for hpe
 loss: nll_loss
 metrics:
 - top1_acc
 - top3_acc
-lr_scheduler:
-  type: StepLR
-  args:
-    step_size: 50
-    gamma: 0.1
+# lr_scheduler: # doesn't make a diff cause its disabled in code
+#   type: StepLR
+#   args:
+#     step_size: 50
+#     gamma: 0.1
 trainer:
-  epochs: 30 # 100
+  epochs: 200 #30 # 100
   save_dir: saved/
   save_period: 500
   verbosity: 2
   persistent_storage: true # false # this is very helpful when also loading depth images
   monitor: max val_top1_acc
-  early_stop: 20 #30 #20 # 30
+  early_stop: 200 #40 #30 #20 #30 #20 # 30
   tensorboardX: true
   log_dir: logs
