@@ -31,3 +31,13 @@ Aims:
 - In general, theoretically we anticipate either `y'''>y'` OR `z'''>z'` but it doesn't make sense for both to be better due to the *chicken and egg problem*.
 
 - Nevertheless, if we can show that for any arbitrary model `x->(y''',z''')` if `y''' > y'' = y'` AND `z''' > z''` (or the same argument but y and z exchanged) then we have achieved the main aim of the project. In words: atleast one out of two output modalities is enhanced by using side information and the other output modality is better with respect to the trivial baseline. Definitely both modalities should be better with respect to the trivial baseline.
+
+
+
+Experiments:
+- Need to show that if we train a model which is deep-prior no conditioning + lstm with only x and z information end-to-end and then we test x -> z'. Then compare this to x->y' training and y'->z' training and then x->y''->z'' test we show that z''>z' to motivate the use and empirical benefits of side information! Methods:
+  - Train x_seq->deep-prior+lstm->z' end-to-end
+  - Test x_seq->deep-prior+lstm->z'
+  - Now train x_seq->deep_prior->y' AND y->z'
+  - Test x->y''->z''
+  - Show z''>z' making y a strong source of side information for y' and justifies use of two-model approach.

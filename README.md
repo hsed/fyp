@@ -272,43 +272,10 @@ If So, then test on training with augmentation using mest augmentation method ch
 
 CHOOSE: PICK BEST CROPPING OPTION
 
-### Experiment # 3:
-#### Details
-After all the best choices from above, do different choices for concatenation of action label as a baseline
-
-
-Baseline: Original + (OLD/NEW) CROP + (???) AUG -> 25mm
-
-Baseline: BaselineHPE/0420_2254 ()
-
-Epochs: 30 (BEST@EP__)
-
-| Method of Concat | Experiment | Other Notes | Val Error (Train on 1.0 train-set, test on 0.2 val-set) | Test Error (Train on full train-set) |
-| -----------------| --------- | -------------------------- | ---------------- | ----------------- |
-Baseline | BaselineHPE/0509_1106 | See experiment for config, crop2, deterministic, gpuid3, no data aug, valsplit -0.2 | 22.0583 (22.0340@EP26) | - |
-SoftmaxActionOut | BaselineHPE/0509_1232 | Train with action label as output rather than input so a softmax layer as oputput and gradients backpropagating, its like multi-task learning | ~32.0747 (~31.5010mm@EP28) | - |
-ConcatAsImgChannel1 |  | 45x1x1dim one-hot -> 45x128x128 with only one channel ones all zeros; 45:1 concat | - | - |
-ConcatAsImgChannel2 -crop2 | BaselineHPE/0509_1704 | idx->45 (learnt embed) ; 45->45x1x1->45x128x128 expansion 45:1 concat | - | - |
-ConcatAsImgChannel3 | - | 45->128x128 embedding then concat 1:1 | - | - |
-ConcatAsImgChannel4 | - | 45x1x1 -> 45x128x128 upsample then concat 45:1 | - | - |
-ConcatAsImgChannel4 | - | 45x1x1 -> 45x128x128 upsample the conv -> 1x128x128 then concat 1:1 | - | - |
-Concat+Softmax | - | Best Concat + Softmax | - | - |
 
 
 
-### methods for concat
-1. FiLM Layer:
-   - First tried only after bn in resblock -- doesn't work error too high we tried one BN only or all of them, the best was last BN layer that too was not that good 
-   - next tried putting it in BEFORE residual addition -- a lot better initially then in converges in val error i.e. doesnt decrease but training is still decreasing this implies it is overfitting maybe?
-     - a possible solution: disable conditioning halfway through trainining? Basically after certain epochs, we set action condition of model to 0. something like epoch callback attrib in the model
-   - Now we have made conditioning changes in many places we have currently last BN+ReLU+Conv block with conditioning and also the skip connection with conditining, we have alos disabled BN training for those layers with conditioning. need to ensure if this works properly?
-   - NEXT: we try putting the condition AFTER residual addition also maybe having it for fewer
-   - NEXT: Try the turn of conditioning setting after few epochs
-   - NEXT: Try chaning the embedding to linear layer and from long index tensor to 1-hot 2d tensor as then we can use probabilities!
-2. Simple use of duplicating index information and concat as 1 channel 128x128 that worked but not better than no condition
-3. BEST ONE SO FAR: concat of 45 action channels with 1 channel of depth this 45 channels is expanded in width and height and converted from index to embedding of 45 dim using embedding layer.
-4. next we can try to do number 3 but use embedding layer?
-5. 
+
 
 
 use rnn cell for meta learning rnn for feedbck loop see deepleanring last and final lecture
@@ -377,14 +344,6 @@ Another thing we observed is that after testing on AugType PCA+None for PCA+Trai
 
 ---
 
-### **TODO** So things to try:
-
-- first fix the cropping problem in msra , maybe use original cropping transformation functions etc and see if we can get better avg 3d error when doing rot augmentation than when not doing it.
-
-- port over, one by one the new cropping procedure i.e. draw 40px padded box, first without augmentation and see if for both fhad and msra u get better or same results atleast for fhad we expect better results, do it first only without augmentation
-
-- port over new cropping procedure for augmentation as well and test effects on moth msra and fhad, does it match performance of original augmentation functions?
-
 
 
 | Experiment | Notes | Train/ValError@5Epochs |
@@ -412,21 +371,6 @@ BaselineHPE/0408_1845 and BaselineHPE/0408_1817 are the best one basically they 
 ```
 
 
-
-
-We carried out a few experiments to investigate deterministic vs non-deterministic settings
-
-in general, while deterministic experiments are repeatable, the whole idea of adata augmentation lies on the fact that
-data generation is randomised and new data is generated AT EVERY EPOCH so that there is no sign of overfitting
-
-we tested several combinations of data augmentation and determinisic setting. from these we dfound that one with all augment gave the best lower bound (0410_1838) although it was still worse than no augmentation (0420_1720 or 1946). Other experiements in this setting start from BaselineHPE/0410_1720 till about 1900 or 2000.
-
-Now we changed to new device to results are a bit skewed but nevertheless all 3 augmentations WITH RANDOMNESS (BaselineHPE/0411_0220
-) is much better that without randomness (BaselineHPE/0410_2011). 
-
-However when it comes to augmentation vs no augmentation, augmentation doesn't REALLY help, non-augmentation either always win or comes very close, maybe for long term epoch it might be better but atleast till 20 epoch, augmentation doesn't really help...
-
-Maybe this implies that augmentation is 'too stochastic'?
 
 ##### Tests for different crop sizes
 
@@ -480,27 +424,6 @@ self.dataset.make_transform_params_static(AugType, \
 ```
 
 
-URGENTLY NEED NEW CROP FUNCTION FOR HPE!!
-FOR FHAD!
-
-Y_FINAL value for pca is the likes of 2.5!! which means completely cropped and in the background!
-either cropping doesn't work or something is really bad !
-maybe croppin is buggy!
-visualise your results! use jnb to check worst case scenarios!
-
-cropping to 400m showed some improvements to this area has some potentials!!
-
-
-
-Cropping:
-- try new padding method with range of different paddings e.g. +10px, +40px, +100px -10px, -40px, -100px,, pick best
-- try largest value for each axis method where after picture is centered you find the largest and smallest mm px in x,y,z seperately and from that u decide your crop sz. crop sz can also be a multiple of this e.g. 1.2x or 0.8x or 1x.
-- pick best from both of above method tested on fhad, no aug is really required...
-
-
-Action:
-- try all methods listed above to incorporate action info into HPE...
-
 
 
 
@@ -521,76 +444,44 @@ curl -L https://imperialcollegelondon.box.com/shared/static/LINK_HIDDEN -o datas
 
 ```
 
----
----
-
-### New Cropping Methods
-
-Tried:
-- standard method
-- tried the padding method notice the not ideal not exact ratio of x/y causes the distoreted? squashed inages
-
-here device id 2 was used! (gpu 3)
-new tests in DETERMIISTIC MODE FOR REPETITION
-
-(best ound at earlier stage, mode 2 not sure how we got here exactly?)
-
-0414_1446 -> Mode 0 (wasn't really working that well --- a bit upper bounding) -- need to do this again for full 20 epochs!!!
-0414_1650 -> Mode 1 (usable future choice)
-0414_1552 -> Mode 2 (note im not sure if this is with double int or single rounding, see later...; 0414_1902 is WITH DOUBLE INT ROUNDING)
-                    Need one more experiment to see if 1552 is better or not basically now test single int rounding...
-                    If next experiment is worse that 1902, then re-enable double rounding! int(...) ; int(...).
-                    1902 is better so we stick to double rounding!!
-0414_1809 -> Mode 3 (almost as good as mode 1)
-
-
-mode 0: usually upper bound for most graps however a lot of variaion  
-mode 1: least variations also the best lowest score in 20 steps
-mode 2: generally an upper bound for most large parts where errors remain large, it does come down however in 20 steps as lowest score
-mode 3: looks good as well mimic mode 1 in amny places
-
-one thing we've noticed is that the keypoints don't scale properly i.e. unhandled by code so we can't have different x and different y ranges this is the case with method 2 the problem occurs that keypoint projection on depthmaps clearly show misalignement thus padd w.r.t CoM in both x and y dirs must be same! Otherwise aspect ratio is not presevered, we can see method 2 images appearing squashed
-
-Method 0:
-Original crop from deep-prio++ for msra dataset WITH OFFSET ADDITION REMOVED (note this is imp!) as this is not needed for FHAD and produces undesirable results, this has no impact on msra provided only meth 0, 1, 3 are used i.e. no custom aspect ratio cropping.
-
-Method 1:
-  We supply keypt values centered w.r.t to CoM i.e keypt_diff = keypt - CoM then take the max(abs(keypt_diff)) of each dir and add some extra mm padding in each direc (+ and - sperately) with equal amounts of padding for x,y with max_val(x_max, y_max) chosen.
-  similar for z using redefined padding value.
-
-method 2:
-  Here all stuff is done in pixel domain, find first the min and max of, x,y values and then for each dir choose whichever is farthest from com and set that as 'amount' of buffer for xy_startend 
-  zstart is based on depth_pad param and max and min keypts value so not really linked to com....
-
-method 3:
- an improvement of method 2 based on com now, a px_diff is now computed much similar to method 1. the x and y diffs are compared and max of that is selected for both x and y for aspect ratio preserving and for zaxis as well com is used so that in end com is always in center of point for x,y and z axis. the buffer is added respectively for x, y and z for x,y, exact same values are highly recommended for aspect ratio preservation.
-
-
-YOU NEED SMOOTHING TO DRAW SOME CONCLUSIONS! SEE 0.6x-0.8x smoothing! also this one after smoothing method 1 or 3 are best
-
-it makes logical sense to have all axis CoM as center this is so that it is analogous ti 3D domain where the 3D values of skeleton is always w.r.t CoM therefore it makes sense if CoM is also in center of depth img
 
 
 
-| Experiment           | Crop SZ | Y Range [Min, Max]| PCA Range [Min, Max]  | Valid3DError@Ep10 (@EP20) | Notes |
-| -------------------- | ------- | ----------------- | --------------------  | ------------------------ | ----- |
-|BaselineHPE/0414_1218 | 200mm   | ??? | ??? | 12.48mm | - |
 
 
-----
-
-#try crop_pad_3d: [90., 90., 100.] [0., 0., 100.] vs #[30., 30., 100.]
-try changing crop_shape (useful for y values) to ~400!!
 
 
-## next experiments
-AUG MODES + DETERMINISM
 
--> try mode 1 -- with augmentation train_0,1 + pca_0,1,3
-try mode 2 -- with augmentation train_0,1 + pca_0,1,3
 
-try mode 3 -- with augmentation train_0,1 + pca_0,1,3
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Choosing deterministic or random-ish Experiements
+We carried out a few experiments to investigate deterministic vs non-deterministic settings
+
+in general, while deterministic experiments are repeatable, the whole idea of adata augmentation lies on the fact that
+data generation is randomised and new data is generated AT EVERY EPOCH so that there is no sign of overfitting
+
+we tested several combinations of data augmentation and determinisic setting. from these we dfound that one with all augment gave the best lower bound (0410_1838) although it was still worse than no augmentation (0420_1720 or 1946). Other experiements in this setting start from BaselineHPE/0410_1720 till about 1900 or 2000.
+
+Now we changed to new device to results are a bit skewed but nevertheless all 3 augmentations WITH RANDOMNESS (BaselineHPE/0411_0220
+) is much better that without randomness (BaselineHPE/0410_2011). 
+
+However when it comes to augmentation vs no augmentation, augmentation doesn't REALLY help, non-augmentation either always win or comes very close, maybe for long term epoch it might be better but atleast till 20 epoch, augmentation doesn't really help...
+
+Maybe this implies that augmentation is 'too stochastic'?
 
 ### Choosing the Validation Set
 
@@ -607,9 +498,11 @@ try mode 3 -- with augmentation train_0,1 + pca_0,1,3
 Answer: 
 1.0 Trainset + 0.2 Validation Set for Quick Testing w/ 20-30EP training depending on impact. With ~10EP early stopping. no checkpointing but maybe saving the best model and if best model != last model then saving that too for continuation.
 
+---
+
 ### Choosing the Cropping Method
 
-We applied four different cropping methods see statement above. The best we found was method #2 and we will stick with that, even though it produces worse results when visually seeing it images get squashed but overall error is low. **NEED TO VERIFY THAT AFTER PREDICTION IT LOOKS GOOD TOO**.
+We applied four different cropping methods see statement above. The best we found was method #2 and we will stick with that, even though it produces worse results when visually seeing it images get squashed but overall error is low. **NEED TO VERIFY THAT AFTER PREDICTION IT LOOKS GOOD TOO**. **SEE HPE_DEPTH_CROP PAGE**
 
 < insert picture here>
 
@@ -622,7 +515,6 @@ BaselineHPE/0419_1007 (note this is full test set maybe its better to show valid
 
 
 ### Baseline Performance
-
 Test-Set as shown in BaselineHPE/0417_1634
 
 We will do a full baseline validation set performance as well....
@@ -662,3 +554,38 @@ I have tried several different ways to implement the unrolled lstm, the best one
 the use of unrolled lstm. around the same epoch range the unrolled version has accuraccy of 0.7002@EP96
 
 There are also major drops of accuracy @EP 38 & 45 to about ~30% but that is almost quickly recovered. The final implementation is **BaselineLSTM/0521_1048**
+
+
+
+
+saved/BaselineLSTM/0521_1409/model_best.pth: trained on entire train set for 100 epochs compact lstm version used. pca involved perf 75%
+saved/BaselineLSTM/0521_1445/model_best.pth: trained on entire train set for 100 epochs slow/unrolled/manual version used. pca involved perf ~70%
+
+
+
+### problems with loading combined model
+we notice many problems that when creating a model that is combined the performance degrades considerably when only training the har part and not the hpe part. it could be because maybe the optimiser is trying to optimise all such parameters although it shouldn't be really because its a seperate block. nonetheless we need to be carefully on how to perform the training we need to set requires grad to false for the proportion or do something
+
+basic file structure to test out combined model.
+
+a lot of changes are performed in various files to bring stuff together, still a lot more work is required as current action 
+accuraccy from predicted samples is too low.
+
+
+
+## NEW: A NOTE ON BATCH_NORM:
+VERY IMP:
+batchnorm2d has 2 additional params during intialisation. One param is `affine` and the other is `track_running_stats`. Both are quite helpful for us to do various things for our model.
+
+NEED TO CHANGE CODE: such that whenever a context layer is present in bn_relu_block simply set affine to FALSE such that when traning the affine stuff is not done for batch norm this is because affine transform is handled by film layers (later down the line). however the standardisation still takes place as before along with running stats. This way theoretically we should achieve very similar or exact performance as before.
+
+Note: must re-run for 30epochs and test some score on hpe then make changes and re-run also first save on github to easily undo any changes! its important to test the effects! Also if you do this you need to consider what happens to old saves do they still work?
+
+So for instead of hacky context layers that are not actually supplied you basically set affine=False for batch_norm
+
+
+NOW FOR COMBINED MODEL DURING FINE TUNING:
+during fine tuning there are newer batch sizes and many different sizes for which we DO NOT know in advance of size
+for some models it can be as low as 2 or 4. In this case its best to set `track_running_stats` to FALSE this is same as setting `training` to FALSE. this way always its ensured that EXACT CURRENT batch_size is used to calc mean and variance so a large change in batch_sizes wont cause big issues so this is equivalent to train mode but then the training can still occur. nonetheless training is training of affine params so if we use some model with action condition that that too is disabled. and it degenerated to exactly as training = false
+
+for this you should basically loop around all modules in for loop fashion and for every nn.batchnorm2d found simply set `track_running_stats` to FALSE only do this for certain version numbers..... so like maybe v4d first then v3d and then maybe v2d as v2d2
