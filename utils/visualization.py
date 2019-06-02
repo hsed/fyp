@@ -15,11 +15,14 @@ class WriterTensorboardX():
         self.step = 0
         self.mode = ''
 
-        self.tensorboard_writer_ftns = ['add_scalar', 'add_scalars', 'add_image', 'add_audio', 'add_text', 'add_histogram', 'add_pr_curve', 'add_embedding', 'add_figure']
+        self.tensorboard_writer_ftns = ['add_scalar', 'add_scalars', 'add_image', 'add_audio', 'add_text', 'add_histogram', 'add_pr_curve', 'add_embedding', 'add_figure', 'add_video']
 
     def set_step(self, step, mode='train'):
         self.mode = mode
         self.step = step
+    
+    def close(self):
+        self.writer.close()
 
     def __getattr__(self, name):
         """
@@ -37,7 +40,7 @@ class WriterTensorboardX():
         else:
             # default action for returning methods defined in this class, set_step() for instance.
             try:
-                attr = object.__getattr__(name)
+                attr = getattr(self.writer, name)
             except AttributeError:
                 raise AttributeError("type object 'WriterTensorboardX' has no attribute '{}'".format(name))
             return attr

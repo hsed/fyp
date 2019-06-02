@@ -22,3 +22,6 @@ logs/CSV
 
 # ipynb checkpoints
 .ipynb_checkpoints/
+
+# temp excel files
+~$*.xlsx
