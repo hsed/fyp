@@ -9,9 +9,11 @@ from data_utils import *
 from data_utils.data_loaders import _check_pca
 from models import *
 from metrics import *
+from trainer import init_metrics
 
 from contextlib import contextmanager
 from timeit import default_timer
+from test import _tensor_to
 
 ## display elapsed time
 @contextmanager
@@ -71,15 +73,224 @@ def test_data_collate_fn():
     in4, target4 = coll4(sample_input_seq_4)
 
 
-def test_combined_data_loader_and_model():
+def _test_combined_data_loader_and_model(config_set=0):
     with elapsed_timer() as elapsed:
-        pad_seq = False #True Set this to false as most losses are easier to compute using a packed seq rather than pad seq
+        ## change config set to test a different set of params
+        #config_set = 3 # #2 #-2 # -1 #1 #0
+
+
+        print("\n\n>>>> CONFIG SET = %f <<<<\n" % config_set)
+        pad_seq = False # Set this to false as most losses are easier to compute using a packed seq rather than pad seq
+        max_pad_length = 15
+        
+        hpe_predict_action = False # this is globally false except if some config changes it
+        attention_lstm_type = 'disabled'
+
+        ### need to test use_wrist_com and also test crop 4 or 5
+        
+        # settings that go together
+        # set 1: 
+        if config_set == -2:
+            # train lstm -- without pca -- a lot better at least here
+            loss = 'nll'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False 
+            forward_type = 3
+            gen_action_seq = False
+            action_cond_ver = 0
+            combined_ver = '0'
+        if config_set == -1:
+            # train lstm -- with pca
+            loss = 'nll'
+            use_pca = True
+            eval_pca_space = True
+            train_pca_space = True 
+            forward_type = 3
+            gen_action_seq = False
+            action_cond_ver = 0
+            combined_ver = '0'
+        if config_set == 0:
+            # combined model
+            loss = 'combined'
+            use_pca = True
+            eval_pca_space = True #both must be true for combined model
+            train_pca_space = True 
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 0
+            combined_ver = '0'
+        if config_set == 1:
+            # combined model -- ensuring that hpe output is un_pca_ed test this!!
+            # ensure somehow pca components are loaded inside the hpe model??
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 0
+            combined_ver = '0'
+        if config_set == 2:
+            # combined with action as feedback mechanism
+            # this is just for testing not a viable model
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = True # use this to produce action at input
+            action_cond_ver = 6
+            combined_ver = '0a'
+        if config_set == 2.1:
+            # combined with action as feedback mechanism
+            # this is just for testing not a viable model
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = True # use this to produce action at input
+            action_cond_ver = 6
+            combined_ver = '0b'
+        if config_set == 2.2:
+            # combined with action as feedback mechanism
+            # this is just for testing not a viable model
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = True # use this to produce action at input
+            action_cond_ver = 0 # this is for hpe >0 implies us action information
+            combined_ver = '0c'
+        if config_set == 3:
+            # test simple hpe model that makes use of recurrent feedback of previous prediction
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 6
+            combined_ver = '1a'# forward_v1_hpe
+            hpe_predict_action = True
+        
+        if config_set == 4:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 0
+            combined_ver = '2a' #'3a' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
+        if config_set == 4.1:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 0
+            combined_ver = '3a' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
+        if config_set == 4.2:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 0
+            combined_ver = '3d' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
+        if config_set == 4.3:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 7
+            combined_ver = '4d' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
+        if config_set == 5:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 0
+            combined_ver = '5d' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
+        if config_set == 5.1:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            attention_lstm_type = 'v5'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 7
+            combined_ver = '6d' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
+        if config_set == 5.2:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 0
+            combined_ver = '7d' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
+        if config_set == 5.3:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 7
+            combined_ver = '8d' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
+        if config_set == 5.4:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 7
+            combined_ver = '8d3' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
         train_loader = CombinedDataLoader(
                                                     data_dir='datasets/hand_pose_action',
                                                     dataset_type='train',
                                                     batch_size=2, #4,
                                                     shuffle=False,
-                                                    validation_split=0.0,
+                                                    validation_split=-0.05,#0.0,
                                                     num_workers=0,
                                                     debug=False,
                                                     reduce=True,
@@ -87,10 +298,11 @@ def test_combined_data_loader_and_model():
                                                     # # make this a small value for faster training during debugging,
                                                     # this can still limt frames without padding turned on
                                                     # its actually max seq length
-                                                    max_pad_length=15, #20, #-1, # 100
+                                                    max_pad_length=max_pad_length, #20, #-1, # 100
                                                     randomise_params=False,
-                                                    use_pca=True,# everything is on pca'ed stuff
-                                                    forward_type=0, # 3
+                                                    use_pca=use_pca,# everything is on pca'ed stuff
+                                                    forward_type=forward_type,
+                                                    gen_action_seq=gen_action_seq, ## for 0debugact
                                                 )
             
         combined_model = CombinedModel(
@@ -99,22 +311,25 @@ def test_combined_data_loader_and_model():
                                         pca_checkpoint=None,
                                         hpe_args=dict(
                                             input_channels=1,
-                                            action_cond_ver=0, # use 0 or 6 => no action cond, 6 => best action cond using film 
+                                            action_cond_ver=action_cond_ver, #0, # use 0 or 6 => no action cond, 6 => best action cond using film 
                                             dynamic_cond=False, # true -> turn off after X epochs
                                             pca_components=30,
                                             dropout_prob=0.3,
                                             train_mode=True,
                                             init_w=True,
-                                            predict_action=False, #true ## new
+                                            predict_action=hpe_predict_action, #true ## new
                                             res_blocks_per_group=5, # 5 -- orig
+                                            train_pca_space=train_pca_space,
+                                            eval_pca_space=eval_pca_space,
                                         ),
                                         har_args=dict(
-                                            in_frame_dim=30,
+                                            in_frame_dim=30 if use_pca else 63,
                                             num_hidden_layers=1,
                                             use_unrolled_lstm=True, # basically the combined model must use an unrolled version this will be made permanent later
+                                            attention_type=attention_lstm_type,
                                         ),
-                                        forward_type= 0, #3,
-                                        combined_version='0',
+                                        forward_type=forward_type,
+                                        combined_version=combined_ver,
                                         force_trainable_params=True, # make all params trainable
         )
 
@@ -123,21 +338,23 @@ def test_combined_data_loader_and_model():
 
         ## need to finx these
         optimizer = torch.optim.Adam(combined_model.parameters())
-        criterion = lambda outputs, targets: mse_seq_and_nll_loss(outputs, targets) #torch.nn.NLLLoss()
+
+        if loss == 'mse':
+            criterion = lambda outputs, targets: mse_loss(outputs, targets) #torch.nn.NLLLoss()
+        if loss == 'nll':
+            criterion = lambda outputs, targets: nll_loss(outputs, targets) #torch.nn.NLLLoss()
+        if loss == 'combined':
+            criterion = lambda outputs, targets: mse_seq_and_nll_loss(outputs, targets) #torch.nn.NLLLoss()
+
+        device, dtype = torch.device('cpu'), torch.float
 
         top1_acc_fn = lambda outputs, targets: top1_acc(outputs, targets)
 
         ### basic ver of avg 3d metric -- a bit messy but no time to clean! TODO: but this code in init area
         ### maybe just directly pass it the train loader params object or something....
-        avg_3d_err_fn = Avg3DError(cube_side_mm=train_loader.params['cube_side_mm'],
-                                            ret_avg_err_per_joint=False)
-        avg_3d_err_fn.pca_decoder = \
-            PCADecoderBlock(num_joints=train_loader.params['num_joints'],
-                            num_dims=train_loader.params['world_dim'],
-                            pca_components=train_loader.params['pca_components'])
-        avg_3d_err_fn.pca_decoder.initialize_weights(weight_np=train_loader.pca_weights_np,
-                                                            bias_np=train_loader.pca_bias_np)
-        
+        avg_3d_err_fn = [Avg3DError] if loss == 'combined' else []
+        init_metrics(avg_3d_err_fn, combined_model, train_loader, device, dtype)
+        avg_3d_err_fn = avg_3d_err_fn[0] if loss == 'combined' else None
 
         
         tmp_item = None
@@ -168,9 +385,23 @@ def test_combined_data_loader_and_model():
         top1_accs = []
         avg_3d_errs = []
         (data, target) = tmp_item #deepcopy(tmp_item) # we need 'fresh new data' everytime! otherwise some errors in backprop
-        epochs = 10
+        data = _tensor_to(data, device, dtype)
+        target = _tensor_to(target, device, dtype)
+        #print("TARGET: ", torch.argmax(target[1], dim=1))
+        
+        # ## new code to ensure same results in rolled and unrolled combined version
+        # for m in combined_model.modules():
+        #     if isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.Dropout):
+        #         m.eval()
+        #         for param in m.parameters():
+        #             param.requires_grad = False # also make non-trainable
+
+        epochs = 10 #2 #10
+        #combined_model.hpe.main_layers.eval()
+        #combined_model.hpe.linear_layers.eval()
+        combined_model.train()
         with tqdm(total=epochs, desc="Overfitting CombinedModel on 1 batch for %d epochs" % epochs) as tqdm_pbar:
-            for _ in range(10):
+            for _ in range(epochs):
                 #(data, target) = deepcopy(tmp_item) # tmp_item.copy()
                 output = combined_model(data) # direct invocation calls .forward() automatically
                 loss = criterion(output, target)
@@ -178,7 +409,7 @@ def test_combined_data_loader_and_model():
                 optimizer.step() # update weight/bias params
                 losses.append(loss.item())
                 top1_accs.append(top1_acc_fn(output, target))
-                avg_3d_errs.append(avg_3d_err_fn(output, target))
+                if avg_3d_err_fn is not None: avg_3d_errs.append(avg_3d_err_fn(output, target))
                 tqdm_pbar.update(1)
         print("10 Losses:\n", losses)
         print("10 Top-1 Acc:\n", top1_accs)
@@ -193,9 +424,18 @@ def test_combined_data_loader_and_model_har_vs_combined():
     # do something similar to har
 '''
 
+def test_combined_model():
+    for i in range(-2, 3):
+        _test_combined_data_loader_and_model(config_set=i)
+
+
 if __name__ == "__main__":
     # pytest --rootdir=tests tests\combined_tests.py -v
     # python -m tests.combined_tests 
     import argparse
+    parser = argparse.ArgumentParser(description='Combined Model Tests Module')
+    parser.add_argument('-c', '--config-set', default=0, type=float,
+                           help='config set to use for test')
+    args = parser.parse_args()
     #test_data_collate_fn()
-    test_combined_data_loader_and_model()
+    _test_combined_data_loader_and_model(config_set=args.config_set)

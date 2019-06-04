@@ -135,10 +135,6 @@ def test_keypt_crop_vs_no_crop():
     sample1 = next(iter(train_loader1))
     sample2 = next(iter(train_loader2))
 
-    assert torch.allclose(sample1[0][0].data[0], sample2[0][0].data[0], atol=8e-05, rtol=1e-06) #sample[0][0].data[0]
-    assert torch.allclose(sample1[0][1], sample2[0][1], atol=8e-05, rtol=1e-06)
-
-
 if __name__ == "__main__":
     # pytest --rootdir=tests tests\har_tests.py -v
     # python -m tests.har_tests 
