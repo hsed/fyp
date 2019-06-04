@@ -5,6 +5,7 @@ import torch.nn.init as I
 from torch import tensor as T
 from collections import OrderedDict, deque
 from copy import deepcopy
+from functools import partial
 import yaml
 
 from models import BaseModel, DeepPriorPPModel, BaselineHARModel
@@ -19,7 +20,8 @@ class CombinedModel(BaseModel):
                  joints_dim=63, max_seq_length=120,
                  ensure_batchnorm_fixed_eval=False,
                  ensure_dropout_fixed_eval=False,
-                 ensure_batchnorm_dropout_fixed_eval=False):
+                 ensure_batchnorm_dropout_fixed_eval=False,
+                 temporal_smoothing=-1):
         
         #???self.train_mode = 'u_v_w'????
         super(CombinedModel, self).__init__()
@@ -91,6 +93,8 @@ class CombinedModel(BaseModel):
         self.forward_type = int(forward_type)
         self.combined_version = str(combined_version)
 
+        print("[COMBINED_MODEL] Using Combined Version: %s" % self.combined_version)
+
         #### temporary code for debugging only ####
         if self.combined_version == '0c' and not getattr(self, "hpe_act", False):
             print('[COMBINED_MODEL] SPECIAL DEBUG CODE: CREATING TEMP HPE ACT')
@@ -99,7 +103,7 @@ class CombinedModel(BaseModel):
             self.hpe_act = DeepPriorPPModel(**hpe_act_args)
         
         #### new attention mechanism ####
-        if self.combined_version[0] == '5' or self.combined_version[0] == '6':
+        if self.combined_version[0] == '5':
             print('[COMBINED_MODEL] V5X/6X: Adding extra module for attention mechanism')
             self.attention_layer = nn.Linear(joints_dim*max_seq_length, max_seq_length)
             self.max_seq_length = max_seq_length
@@ -110,6 +114,12 @@ class CombinedModel(BaseModel):
             self.attention_layer = nn.Conv2d(1,1,kernel_size=(1,joints_dim+self.har.recurrent_layers_dim))
             self.max_seq_length = max_seq_length
             self.joints_dim = joints_dim
+        
+        #### check
+        if self.combined_version[0] == '8':
+            if temporal_smoothing < 0 or temporal_smoothing > 1:
+                print('[COMBINED_MODEL] Gamma=%d is invalid, using default gamma=0.4 for combined ver 8x' % temporal_smoothing)
+                temporal_smoothing = 0.4
 
         self._assert_attribs()
         if not force_trainable_params: self._set_trainable_params() # turn params on or off based on forward type and versions
@@ -124,15 +134,20 @@ class CombinedModel(BaseModel):
             '2b': self.forward_v0,
             '2b2': self.forward_v0,
             '2c': self.forward_v0,
-            '2d': self.forward_v0,
+            '2d': self.forward_v0, # 2nd best
             '3a': self.forward_v0_unrolled,
-            '3d': self.forward_v0_unrolled,
-            '4d': self.forward_v0_unrolled_action_feedback,
+            '3d': self.forward_v0_unrolled, # 2nd best
+            '4d': self.forward_v0_unrolled_action_feedback, # best
             '5a': self.forward_v0_unrolled_attention,
             '5d': self.forward_v0_unrolled_attention,
             '5f': self.forward_v0_unrolled_attention,
-            '6d': self.forward_v0_unrolled_action_feedback_attention,
+            '6d': self.forward_v0_unrolled_action_feedback_attention, # new, rewritten
             '7d': self.forward_v0_unrolled_attention_cnn,
+            '8d': self.forward_v0_unrolled_action_feedback_smoothing,
+            '8d1': partial(self.forward_v0_unrolled_action_feedback_smoothing, gamma=0.4, har_smoothing=False),
+            '8d2': partial(self.forward_v0_unrolled_action_feedback_smoothing, gamma=0.4, har_smoothing=True),
+            '8d3': partial(self.forward_v0_unrolled_action_feedback_smoothing, gamma=temporal_smoothing, har_smoothing=False),
+            '8d4': partial(self.forward_v0_unrolled_action_feedback_smoothing, gamma=temporal_smoothing, har_smoothing=True),
         }
 
         # set here to ensure init_metric fn can access these values
@@ -235,8 +250,8 @@ class CombinedModel(BaseModel):
                 print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
             
 
-            elif self.combined_version == '4d' or self.combined_version == '6d':
-                print("[COMBINED_MODEL] V4D/V6D: Setting all layers layers (incl. PCA) trainable, ensuring HPE is wActCond.")
+            elif self.combined_version == '4d' or self.combined_version == '6d' or self.combined_version[:2] == '8d':
+                print("[COMBINED_MODEL] V4D/V6D/V8D: Setting all layers layers (incl. PCA) trainable, ensuring HPE is wActCond.")
                 print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
                 for param in self.hpe.final_layer.parameters():
                     param.requires_grad = True
@@ -498,7 +513,111 @@ class CombinedModel(BaseModel):
         z = self.har.action_layers(h_final_timestep)
 
         return (y, z)
+    
 
+    def forward_v0_unrolled_action_feedback_smoothing(self,x, gamma=0.4, har_smoothing=True): #False
+        '''
+            Action conditioned back_prop
+            Assumes Self.HPE can accept action
+
+            x => Depth_Packed (GT Actions NOT REQUIRED)
+            y => Keypts
+            h => Hidden State from HAR.LSTM
+            z => Action
+        '''
+        x_padded, lengths = pad_packed_sequence(x, batch_first=True)
+
+        y = []
+        
+        h = [] # store hidden states from HAR.LSTM block (before HAR.LIN block)
+
+        (h_n, c_n) = self.get_h0_c0(x_padded) # get init state_vector for LSTM
+        z_n = self.get_a0(x_padded) # get_equiprob z vector
+
+        y_prev = self.hpe((x_padded[:,0,...].unsqueeze(1), z_n))
+
+        # timestep is dim[1]
+        for i in range(x_padded.shape[1]):
+            # simple non-action pass-through
+            # unsqueeze for channel dim
+            y_i = self.hpe((x_padded[:,i,...].unsqueeze(1), z_n))
+
+            y_mavg = gamma*y_prev + (1-gamma)*y_i
+            y_prev = y_mavg
+            y.append(y_mavg)
+
+            # unsqueeze for time_len=1
+            # resqueeze (at another dim) cause hidden output has another dim for uni or bidirect lstm
+            if har_smoothing:
+                y_i = y_mavg # use smoothed y_i as input to har -- probably gonna have bad consequences
+            h_i, (h_n, c_n) = self.har.recurrent_layers(y_i.unsqueeze(1), (h_n, c_n))
+            h.append(h_i.squeeze(1))
+
+            z_n = torch.exp(h_i.squeeze(1)) # these are log_probs, need to make them probs!
+            # actions.append(torch.exp(self.har.action_layers(y.squeeze(1)))) # for future use
+        
+        # convert back to packedseq making it equal to compact/rolled version during forward pass
+        y_padded = torch.stack(y, dim=1)
+        y = pack_padded_sequence(y_padded, lengths, batch_first=True)
+
+        # extract final state making it equal to compact/rolled version during forward pass
+        h_padded = torch.stack(h, dim=1)
+        h_final_timestep = self.extract_final_timestep(h_padded, lengths)
+
+        z = self.har.action_layers(h_final_timestep)
+
+        return (y, z)
+
+    def forward_v0_unrolled_action_feedback_attention(self, x):
+        '''
+            NEW: V6D HAS CHANGED!!
+        '''
+        # now tuple implies the first item is padded sequence and second item is a batch_sizes (vlens) tensor
+        x_padded, lengths = pad_packed_sequence(x, batch_first=True)
+        y_list = []
+        h_list = [] # list of hidden vectors
+        betas_list = []
+        action_lin_list = []
+
+        (h_n, c_n) = self.get_h0_c0(x_padded) # get init state_vector for LSTM
+        z_n = self.get_a0(x_padded) # get_equiprob z vector
+
+        # timestep is dim[1]
+        for i in range(x_padded.shape[1]):
+            y_i = self.hpe((x_padded[:,i,...].unsqueeze(1), z_n))
+            y_list.append(y_i)
+
+            # unsqueeze for time_len=1
+            # resqueeze (at another dim) cause hidden output has another dim for uni or bidirect lstm 
+            h_i, (h_n, c_n) = self.har.recurrent_layers(y_i.unsqueeze(1), (h_n, c_n))
+            h_list.append(h_i.squeeze(1))
+
+            z_n = torch.exp(h_i.squeeze(1)) # these are log_probs, need to make them probs!
+
+            beta_i = self.har.attention_layer(torch.cat([y_i, h_i.squeeze(1)], dim=1))
+            betas_list.append(beta_i)
+            
+            action_lin_i = self.har.action_layers[0](h_i.squeeze(1)) # get linear output without softmax operation
+            action_lin_list.append(action_lin_i)
+        
+        # convert back to packedseq making it equal to compact/rolled version during forward pass
+        y_padded = torch.stack(y_list, dim=1)
+        y = pack_padded_sequence(y_padded, lengths, batch_first=True)
+
+        h_padded = torch.stack(h_list, dim=1) # B x T x 100
+        betas_padded = torch.stack(betas_list, dim=2) # B x 1 x T
+        action_lin_padded = torch.stack(action_lin_list, dim=1) # B x T x 45
+
+        # B x 1 x T -> B x 1 x T (softmaxed)
+        #padded_alphas = torch.log(betas_padded, dim=2)
+        padded_alphas = F.softmax(betas_padded, dim=2)
+
+        # (B x 1 x T) * (B x T x 45) -> (B x 1 x 45) -> (B x 45)
+        action_lin_focused = torch.bmm(padded_alphas, action_lin_padded).squeeze(1)
+
+        z_final = self.har.action_layers[1](action_lin_focused)
+        
+        return (y, z_final)
 
 
     def forward_v0_unrolled_attention(self, x):
@@ -637,80 +756,7 @@ class CombinedModel(BaseModel):
 
         return (y, z)
     
-    def forward_v0_unrolled_action_feedback_attention(self, x):
-        '''
-            U/C
-        '''
-        x_padded, lengths = pad_packed_sequence(x, batch_first=True)
 
-        y = []
-        h = [] # store hidden states from HAR.LSTM block (before HAR.LIN block)
-
-        (h_n, c_n) = self.get_h0_c0(x_padded) # get init state_vector for LSTM
-        z_n = self.get_a0(x_padded) # get_equiprob z vector
-
-        batch_size = x_padded.shape[0]
-        past_timesteps = 0
-        y_buffer_list = [torch.zeros(batch_size, self.joints_dim,
-                               device=x_padded.device, dtype=x_padded.dtype) for _ in range(self.max_seq_length)]
-
-
-        # timestep is dim[1]
-        for i in range(x_padded.shape[1]):
-            # simple non-action pass-through
-            # unsqueeze for channel dim
-            y_i = self.hpe((x_padded[:,i,...].unsqueeze(1), z_n))
-            y.append(y_i)
-            
-            # cloning messes up prev timestep gradients for hpe!
-            #y_buffer = y_buffer.clone() # need this for in-place operation // .detach() not needed gets implied (i think) in clone
-
-            ###### attention #####
-            past_timesteps += 1 # is there a bug when past_timesteps == 120?
-
-            idx_sel = torch.arange(past_timesteps).to(x_padded.device, torch.long) # possible dtype issue with gpu
-            y_buffer_list[i] = y_i
-            y_buffer = torch.stack(y_buffer_list, dim=1)
-            ## possible dtype for arange error here...
-            
-            y_reduced = torch.gather(y_buffer, 1, idx_sel.view(1,-1,1).expand(batch_size, -1, self.joints_dim))
-            #print("Y_RED_SHAPE", y_reduced.shape) # 5x10x63
-
-            # possible device issue with arange
-            betas = self.attention_layer(y_buffer.view(y_buffer.shape[0], y_buffer.shape[1]*y_buffer.shape[2])).unsqueeze(1)
-            betas_reduced = torch.gather(betas, 2, idx_sel.view(1,1,-1).expand(batch_size, 1, -1))
-            #print("BETAS_RED_SHAPE", betas_reduced.shape) # 5x1x10
-
-            # calc softmax along last dim
-            # note we don't use nn.Module here as it is calc amongst reduced tensors!
-            alphas_reduced = F.softmax(betas_reduced, dim=2)
-
-            # note we dont squeee here as we have to unsqueeze later for timestep anyways...
-            y_focused_reduced = torch.bmm(alphas_reduced, y_reduced)
-            #print("Y_AFTER_ATTENTION:", y_focused_reduced.shape) # 5x1x63
-
-
-            # unsqueeze for time_len=1
-            # resqueeze (at another dim) cause hidden output has another dim for uni or bidirect lstm 
-            h_i, (h_n, c_n) = self.har.recurrent_layers(y_focused_reduced, (h_n, c_n))
-            h.append(h_i.squeeze(1))
-            z_n = torch.exp(h_i.squeeze(1)) # these are log_probs, need to make them probs!
-
-
-        ### Now pass y to HAR!
-        ##
-        # convert back to packedseq making it equal to compact/rolled version during forward pass
-        
-        y_padded = torch.stack(y, dim=1)
-        y = pack_padded_sequence(y_padded, lengths, batch_first=True)
-
-        # extract final state making it equal to compact/rolled version during forward pass
-        h_padded = torch.stack(h, dim=1)
-        h_final_timestep = self.extract_final_timestep(h_padded, lengths)
-
-        z = self.har.action_layers(h_final_timestep)
-
-        return (y, z)
 
     def forward_v0_action(self, x):
         ### thi is not a valid model only used for testing

@@ -54,9 +54,10 @@ arch:
       num_hidden_layers: 1
       use_unrolled_lstm: false #false #true # true # true: about 14x slower
     forward_type: 0 #0 #3 # 0: Combined (? -> (KeyPts, Action)); 1: HPE ((Depth,[Action]) -> KeyPts); 2: HAR (Depth -> Action); 3: HAR (KeyPts -> Action)
-    combined_version: '4d' # '3d' #'2d' #'2b' #'2e' #'2d' # '2c'  #'2b' #'2a' # used with forward_type == 0
+    combined_version: '8d4' #'4d' # '3d' #'2d' #'2b' #'2e' #'2d' # '2c'  #'2b' #'2a' # used with forward_type == 0
     ensure_batchnorm_fixed_eval: true
-    ensure_dropout_fixed_eval: false
+    ensure_dropout_fixed_eval: true #false # true is better! see exp 0603_1822
+    temporal_smoothing: 0.4
 data_loader:
   type: CombinedDataLoader
   args:
@@ -76,7 +77,7 @@ data_loader:
 optimizer:
   type: Adam
   args:
-    lr: 0.0003 #1 #0.003
+    lr: 0.00003 #3.0e-05 is better! see exp 0603_1822 0.0001 #0.0003 #1 #0.003
     weight_decay: 1.0e-5 #0.005 #0
     amsgrad: true # note true is good for lstm but bad for hpe ; false and true are almost same for the right lr for combined training
 loss: #mse_seq_and_nll_loss #nll_loss
@@ -91,11 +92,11 @@ metrics:
 - mse_only_seq
 - nll_only_seq
 - combined_only_seq
-# lr_scheduler:
-#   type: StepLR
-#   args:
-#     step_size: 50
-#     gamma: 0.1
+lr_scheduler: ### new for v4d cause it stagnates at ep 15
+  type: StepLR
+  args:
+    step_size: 12 #50
+    gamma: 0.1
 trainer:
   epochs: 30 # 100 -- use this when val split == -1.0
   save_dir: saved/
@@ -106,5 +107,5 @@ trainer:
   early_stop: 10 # 30 -- use this when val split == -1.0 #
   tensorboardX: true
   only_save: false #true #false # true, only do this for when saving the trivial baseline and quit() must quit cause optimiser is at weird state
-  no_train: false #false
+  no_train: true #false #false
   log_dir: logs
