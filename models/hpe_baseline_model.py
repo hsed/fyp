@@ -87,7 +87,8 @@ class LinearEmbeddingBlock(nn.Module):
 
 class FiLMBlock(nn.Module):
     def __init__(self, num_unique_contexts: int, target_channels: int, use_embed=True, use_bias=True, context_dim=1,
-                 use_attention=False, attention_dim=(None,None), use_onehot=False, pre_onehot=True):
+                 use_attention=False, attention_dim=(None,None), use_onehot=False, pre_onehot=True,
+                 accept_tuple_input=False):
         '''
             Arguments:
                 num_unique_contexts: for embedd dict size, how many possible context values
@@ -128,8 +129,10 @@ class FiLMBlock(nn.Module):
                 nn.Softmax(dim=1),
             ]))
 
+        self.accept_tuple = accept_tuple_input
 
-    def forward(self, feature_maps, context):
+
+    def forward(self, feature_maps, context=None):
         ## TO EDIT!!
         #self.batch_size, self.channels, self.height, self.width = feature_maps.data.shape
         # FiLM parameters needed for each channel in the feature map
@@ -139,6 +142,11 @@ class FiLMBlock(nn.Module):
         # if context is None:
         #     ## note this is used for dynamic condioning
         #     return feature_maps
+        if self.accept_tuple and isinstance(feature_maps, tuple):
+            #print("A TUPLE!!")
+            feature_maps, context = feature_maps
+            #print("FEATURE_SIZE:", feature_maps.shape)
+            #print("CONTEXT_SIZE:", context.shape)
 
         if self.use_embed:
             # N.float -> N.long
@@ -152,7 +160,13 @@ class FiLMBlock(nn.Module):
                 # N -> N x 1
                 context = context.unsqueeze(1)
         
-
+        if len(feature_maps.shape) != 4:
+            # this is probably a linear_layer, make it look like a conv layer with H=W=1
+            #print("INPUT IS 1D")
+            input_1d = True
+            feature_maps = feature_maps.unsqueeze(2).unsqueeze(3)
+        else:
+            input_1d = False
         #print("***FILM WAS CALLED!! X_CHANNELS, TARGET_CHANNELS: %d, %d***" % (feature_maps.shape[1], self.target_channels))
         # linear transformation of context to FiLM parameters
         # ? = 1 or > 1
@@ -181,6 +195,11 @@ class FiLMBlock(nn.Module):
             attention = self.attention_layer(output)
             output = output * attention.reshape(-1,1,feature_maps.shape[2], feature_maps.shape[3])
 
+        if input_1d:
+            ## if it was a 1d input make it 1d again
+            #print("OUTPUT SHAPE OLD", output.shape)
+            output = output.reshape(-1, self.target_channels) # for some reason squeeze is not working here...
+            #print("OUTPUT SHAPE NEW", output.shape)
         return output
 
 
@@ -352,7 +371,8 @@ class ResBlock(nn.Module):
             self.skip_con = ExtendedSequential()
         else:
             self.skip_con = ExtendedSequential(
-                BNReLUConvBlock(in_channels, out_channels, kernel_size=1, stride=middle_stride) # context_layer=context_layers_dict[0] -- note this is only to disable bn
+                # context_layer=context_layers_dict[0] -- note this is only to disable bn TODO: fix this and explicitly disable batchnorm
+                BNReLUConvBlock(in_channels, out_channels, kernel_size=1, stride=middle_stride)
             )
         
         self.accept_tuple = True
@@ -434,9 +454,9 @@ class PCADecoderBlock(nn.Module):
             Sets weights as transposed of what is supplied and bias is set as is
         '''
         self.main_layer.weight = \
-            torch.nn.Parameter(torch.tensor(weight_np.T, dtype=self.main_layer.weight.dtype))
+            torch.nn.Parameter(torch.tensor(weight_np.T, dtype=self.main_layer.weight.dtype, device=self.main_layer.weight.device))
         self.main_layer.bias = \
-            torch.nn.Parameter(torch.tensor(bias_np, dtype=self.main_layer.bias.dtype))
+            torch.nn.Parameter(torch.tensor(bias_np, dtype=self.main_layer.bias.dtype, device=self.main_layer.weight.device))
         
         self.main_layer.weight.requires_grad = False
         self.main_layer.bias.requires_grad = False
@@ -448,22 +468,27 @@ class PCADecoderBlock(nn.Module):
 class DeepPriorPPModel(BaseModel): #nn.Module
     def __init__(self, input_channels=1, num_joints=21, num_dims=3, pca_components=30, dropout_prob=0.3,
                  train_mode=True, weight_matx_np=None, bias_matx_np=None, init_w=True, predict_action=False,
-                 action_classes=45, action_cond_ver=0, dynamic_cond=False, res_blocks_per_group=5):
+                 action_classes=45, action_cond_ver=0, dynamic_cond=False, res_blocks_per_group=5,
+                 eval_pca_space=False, train_pca_space=False, fixed_pca=True, preload_pca=True):
         self.num_joints, self.num_dims = num_joints, num_dims
-        self.train_mode = train_mode # when True output is PCA, else output is num_dims*num_joints
         self.predict_action = predict_action
         self.action_cond_ver = action_cond_ver
         self.dynamic_cond = dynamic_cond
+        self.eval_pca_space = eval_pca_space # when TRUE output is PCA (default) at test, else output at test is num_dims*num_joints
+        self.train_pca_space = train_pca_space # this is generally always true but we may need to keep it to false for combined model
+        self.preload_pca = preload_pca # a trainer class 'may' preload pca components
+        self.fixed_pca = fixed_pca # whether to make pca layer trainable this needs to be set during init otherwise opt wouldn't register
 
         super(DeepPriorPPModel, self).__init__()
         channelStages = [32, 64, 128, 256, 256]
         strideStages = [2, 2, 2, 1]
 
-        print("[HPE_MODEL] Action Cond Ver: %d" % self.action_cond_ver)
+        print("[HPE_MODEL] Action Cond Ver: %0.2f" % self.action_cond_ver)
         context_params = {}
         
         # new action conditioning info
         use_resnet_conditioning = False
+        use_lin_conditioning = False
         if self.action_cond_ver == 1:
             input_channels += 1
         elif self.action_cond_ver == 2:
@@ -487,6 +512,114 @@ class DeepPriorPPModel(BaseModel): #nn.Module
         elif self.action_cond_ver == 6:
             use_resnet_conditioning = True
             context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+        elif self.action_cond_ver == 7:
+            ### use of equiprob conditioning ###
+            use_resnet_conditioning = True
+            #use_lin_conditioning = True
+            self.use_equiprob_cond = True
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+        elif self.action_cond_ver == 7.1:
+            ### use of true conditioning on linear ###
+            #use_resnet_conditioning = True
+            use_lin_conditioning = True
+            self.use_equiprob_cond = False #True
+            #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
+                              'accept_tuple_input': True}
+        elif self.action_cond_ver == 7.11:
+            ### use of true conditioning on linear + conv ###
+            use_resnet_conditioning = True
+            use_lin_conditioning = True
+            self.use_equiprob_cond = False #True
+            #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
+                              'accept_tuple_input': True}
+        elif self.action_cond_ver == 7.12:
+            ### use of true conditioning on linear ++  // NO CONV ###
+            use_resnet_conditioning = False
+            use_lin_conditioning = 2 #True :: 2 makes it also use the lowest layer...
+            self.use_equiprob_cond = False #True
+            #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
+                              'accept_tuple_input': True}
+        elif self.action_cond_ver == 7.13:
+            ### use of true conditioning on linear ++  // NO CONV ###
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            use_resnet_conditioning = False
+            use_lin_conditioning = True # do not add condition in last layer
+            self.use_equiprob_cond = False #True
+            LABEL_FLIP_PROB = 0.95 # 0.4 # 0.8
+            self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([LABEL_FLIP_PROB]))
+            #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
+                              'accept_tuple_input': True}
+        elif self.action_cond_ver == 7.14:
+            ### use of true conditioning on linear ++  // NO CONV ###
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            use_resnet_conditioning = False
+            use_lin_conditioning = 2 # do not add condition in last layer
+            self.use_equiprob_cond = False #True
+            LABEL_FLIP_PROB = 0.4
+            print("[HPE] ACT_COND_ 7.14 LABEL_FLIP_PROB:", LABEL_FLIP_PROB)
+            self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([LABEL_FLIP_PROB]))
+            #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
+                              'accept_tuple_input': True}
+        elif self.action_cond_ver == 7.15:
+            ### use of true conditioning on linear ++  // NO CONV ###
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            use_resnet_conditioning = True
+            use_lin_conditioning = False # do not add condition in last layer
+            self.use_equiprob_cond = False #True
+            LABEL_FLIP_PROB = 0.90 # 0.4 # 0.8
+            self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([LABEL_FLIP_PROB]))
+            #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
+                              'accept_tuple_input': True}
+        #### new ####
+        elif self.action_cond_ver == 7.16:
+            
+            ## this is like v7 but on linear cond
+            ### use of equiprob conditioning ###
+            #use_resnet_conditioning = True
+            use_lin_conditioning = True
+            self.use_equiprob_cond = True
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+        elif self.action_cond_ver == 7.17:
+            ### use of equiprob conditioning ###
+            ## this is like v7 but on linear cond++
+            #use_resnet_conditioning = True
+            use_lin_conditioning = 2
+            self.use_equiprob_cond = True
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+        elif self.action_cond_ver == 7.18:
+            ### use of equiprob conditioning ###
+            ## this is like v7 but on linear+res cond
+            use_resnet_conditioning = True
+            use_lin_conditioning = True
+            self.use_equiprob_cond = True
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+        elif self.action_cond_ver == 7.19:
+            ### use of equiprob conditioning ###
+            ## this is like v7 but on linear++ + res cond
+            use_resnet_conditioning = True
+            use_lin_conditioning = 2
+            self.use_equiprob_cond = True
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+        ### end new ###
+        elif self.action_cond_ver == 7.2:
+            # this is like act_cond_6 but with also lin cond
+            use_resnet_conditioning = True
+            use_lin_conditioning = True
+            self.use_equiprob_cond = False
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
+                              'accept_tuple_input': True}
             
 
 
@@ -513,15 +646,31 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             
         ]))
 
-        self.linear_layers = ExtendedSequential(OrderedDict([
-            #sadly the input here must be computed manually
-            ('lin_relu_1', LinearDropoutBlock(8*8*256, 1024, 
-               apply_relu=True, dropout_prob=dropout_prob)),
-            ('lin_relu_2', LinearDropoutBlock(1024, 1024, 
-              apply_relu=True, dropout_prob=dropout_prob)),
-            ('lin_relu_3_pca', LinearDropoutBlock(1024, pca_components, 
-              apply_relu=False, dropout_prob=0.)),  # 0 dropout => no dropout layer to add
-        ]))
+        if not use_lin_conditioning:
+            self.linear_layers = ExtendedSequential(OrderedDict([
+                #sadly the input here must be computed manually
+                ('lin_relu_1', LinearDropoutBlock(8*8*256, 1024, 
+                    apply_relu=True, dropout_prob=dropout_prob)),
+                ('lin_relu_2', LinearDropoutBlock(1024, 1024, 
+                    apply_relu=True, dropout_prob=dropout_prob)),
+                ('lin_relu_3_pca', LinearDropoutBlock(1024, pca_components, 
+                    apply_relu=False, dropout_prob=0.)),  # 0 dropout => no dropout layer to add
+            ]))
+        else:
+            self.linear_layers = ExtendedSequential(OrderedDict([
+                ('lin_relu_1', LinearDropoutBlock(8*8*256, 1024, 
+                    apply_relu=True, dropout_prob=dropout_prob)),
+                ('film_lin_1', FiLMBlock(target_channels=1024, **context_params)),
+                ('lin_relu_2', LinearDropoutBlock(1024, 1024, 
+                    apply_relu=True, dropout_prob=dropout_prob)),
+                ('film_lin_2', FiLMBlock(target_channels=1024, **context_params)),
+                ('lin_relu_3_pca', LinearDropoutBlock(1024, pca_components, 
+                    apply_relu=False, dropout_prob=0.)),  # 0 dropout => no dropout layer to add
+                
+            ]))
+            if use_lin_conditioning == 2:
+                print("[HPE] ALSO ADDED EXTRA LAYER OF LIN")
+                self.linear_layers.add_module('film_lin_3', FiLMBlock(target_channels=pca_components, **context_params))
 
         ### add action layer but dont append to linear layers
         ### predict_action
@@ -535,6 +684,8 @@ class DeepPriorPPModel(BaseModel): #nn.Module
         ## back projection layer
         self.final_layer = PCADecoderBlock(num_joints=num_joints,
                                            num_dims=num_dims)
+        
+        self.register_buffer('is_pca_loaded', torch.zeros(1, device=next(self.parameters()).device))
 
         # currently done according to resnet implementation (He init conv layers)
         # also init last layer with pca__inverse_transform vals and make it fixed
@@ -582,6 +733,24 @@ class DeepPriorPPModel(BaseModel): #nn.Module
                 x = self.film_layer(x, a)
             elif self.action_cond_ver == 5 or self.action_cond_ver == 6:
                 pass # all config set during init
+            elif self.action_cond_ver >= 7 and self.action_cond_ver < 7.2:
+                if self.action_cond_ver == 7.13 or self.action_cond_ver == 7.14 or self.action_cond_ver == 7.15:
+                    ## do some randoming...
+                    
+                    # probabilistic
+                    self.use_equiprob_cond = bool(self.equiprob_chance.sample().item())
+                        
+
+                
+                # [7.0, 7.2)
+                if self.use_equiprob_cond:
+                    a = self.equiprob_act.unsqueeze(0).expand(x.shape[0], -1).to(x.device, x.dtype)
+                else:
+                    pass # use actual action
+            elif self.action_cond_ver == 7.2:
+                # dynamic equiprob ..?
+                # try torch bernoulli random....
+                pass
             else:
                 print("Input Len:", len(x), "Input Type:", type(x),
                       "Depth Shape:", x[0].shape, "Action Shape:", x[1].shape)
@@ -597,17 +766,35 @@ class DeepPriorPPModel(BaseModel): #nn.Module
         
         ## must convert x into (n_samples, 8*8*256 vector)
         x = (x[0].view(-1, 8*8*256), x[1])
+        
         x = self.linear_layers(x)[0]
         # discard action info here
+        # if self.action_cond_ver >= 7:
+        #     for layer in self.linear_layers:
+        #         if isinstance(layer, FiLMBlock):
+        #             x = (layer(x[0], x[1]), x[1])
+        #             print("shapes:", x[0].shape, x[1].shape)
+        #         else:
+        #             x = (layer(x[0]), x[1])
+        #     x = x[0]  # discard action info here
 
         y = self.action_layer(x) if self.predict_action else None
         # usually people use self.training which is built in but in our case
         # that would lead to val returining y in keypoint space
         # rather than oca space
         # reshape (63,) -> (21, 3) done automatically
-        return \
-            (x if self.train_mode else self.final_layer(x)) if not self.predict_action \
-                else ((x, y) if self.train_mode else (self.final_layer(x), y))
+
+        if ((self.training and not self.train_pca_space) or (not self.training and not self.eval_pca_space)):
+            x = self.final_layer(x, reshape=False)
+        
+        if self.predict_action:
+            x = (x,y)
+        
+        return x
+
+        # return \
+        #     (x if self.training and  else self.final_layer(x)) if not self.predict_action \
+        #         else ((x, y) if self.train_mode else (self.final_layer(x), y))
     
     def forward_eval(self, x):
         ## use this function at evaluation i.e. testing
@@ -635,22 +822,46 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             # elif isinstance(m, nn.Embedding): # untested // can also do on nn.Linear // note this is intrusive to change
             #     nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
         
-        #print("PARAMS: \n", list(self.children()))
-        #print("WEIGHTS: \n", self.final_layer.weight, "\nShape: ", self.final_layer.weight.shape)
-        #print("\nBIAS: \n", self.final_layer.bias, "\nShape: ", self.final_layer.bias.shape)
         
         # init final layer weights and make them fixed -- used only for test error
-        if (w_final is not None and b_final is not None):
+        if (w_final is not None and b_final is not None and self.preload_pca):
             # we use torch.tensor() method to create a copy of the array provided.
             # as this method always copies data
+            print('[HPE] Init PCA Weights and Bias during global init...')
             self.final_layer.initialize_weights(w_final, b_final)
-            #print("\n\nNEW WEIGHTS: \n", self.final_layer.weight, "\nShape: ", self.final_layer.weight.shape)
-            #print("\nNEW BIAS: \n", self.final_layer.bias, "\nShape: ", self.final_layer.bias.shape, "\n")
-    
+        if self.fixed_pca:
+            print('[HPE] Setting PCA layer as fixed')
+            for param in self.final_layer.parameters():
+                param.requires_grad = False # make it fixed
+
+    def initialize_pca_layer(self, w,b, ensure_fixed_weights=True):
+        if self.preload_pca:
+            if self.is_pca_loaded == torch.zeros(1, device=next(self.parameters()).device):
+                print('[HPE] Init PCA Weights and Bias only...')
+                self.final_layer.initialize_weights(w, b)
+                if ensure_fixed_weights:
+                    print("Making PCA Weights Fixed in Final Layer")
+                    for param in self.final_layer.parameters():
+                        param.requires_grad = False # make it fixed
+                else:
+                    print('[HPE] Warning PCA weights may or may not be fixed...')
+                self.is_pca_loaded = torch.ones(1, device=next(self.parameters()).device)
+            else:
+                print("[HPE] PCA Trainable?", next(self.final_layer.parameters()).requires_grad)
+                print("[HPE] is_pca_loaded: %a => PCA already loaded from global save file so it won't be reloaded." % self.is_pca_loaded)
+        else:
+            print('[HPE] Warning: Model has a PCA layer but preloading PCA is turned off.')
+
     def on_epoch_train(self, epochs_trained):
         if epochs_trained >= 10 and self.dynamic_cond and self.action_cond_ver == 5:
             print("[HPE_MODEL] Turning off action cond (5 -> 0)!!")
             self.action_cond_ver = 0
+        
+        # if epochs_trained >= 15 and self.action_cond_ver == 7.14:
+        #     # note here you should ckech first whats current prob and if it is not 0.01 thenn make it that
+        #     # or slowly decay...
+        #     print("[HPE_MODEL] Making equiprob act prob loww 0.01!!")
+        #     self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([0.01]))
 
     # ## makes a residual layer of n_blocks
     # ## expansion is always 4x of bottleneck
