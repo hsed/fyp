@@ -25,3 +25,8 @@ logs/CSV
 
 # temp excel files
 ~$*.xlsx
+
+# for now ignore these
+results/plot_data
+results/hpe_cond
+results/hpe_logs
