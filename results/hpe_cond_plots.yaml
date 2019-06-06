@@ -1,0 +1,36 @@
+# all paths are relative to root folder!
+# $> python results\plot_learn_curve.py -c results\data.yaml
+
+model_name: HPE 
+title: "HPE Action Conditioning Experiments"
+scalar_tag: avg_3d_err_mm 
+axis_title: "Avg 3D Error" # this will be Prepended with Train/Valid
+max_epochs: 30
+runs:
+  - "0509_1106"
+  - "0509_1324"
+  - "0509_1704"
+  - "0509_1843"
+  - "0511_0316"
+  - "0512_1601"
+  - "0513_1503"
+  - "0514_1801"
+  - "0527_1656"
+  - "0527_1725"
+  - "0527_1756"
+run_tags:
+  - "Baseline"
+  - "Cond v1"
+  - "Cond v2"
+  - "Cond v3"
+  - "Cond v4"
+  - "Cond v5"
+  - "Cond v6 FiLM"
+  - "Cond v7 FiLM"
+  - "Cond v7.1 FiLM"
+  - "Cond v7.1 FiLM"
+  - "Cond v7.12 FiLM"
+legend_loc: 2
+base_path: results/hpe_logs
+save_path: results/plot_pdfs/hpe_cond_learn_curves.pdf
+x_ticks: 7 # good number for 30 epochs
