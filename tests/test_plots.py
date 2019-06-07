@@ -73,7 +73,8 @@ def show_gif_inline(filename):
 #print(len(val_data)) #575
 
 def plot_img_seq(data_tuple, keypt_pred_px, pred_err, action_pred_probs,
-                 keypt_pred_px_2=None, pred_err_2=-1, action_pred_probs_2=None):
+                 keypt_pred_px_2=None, pred_err_2=-1, action_pred_probs_2=None,
+                 all_action_pred_probs_1=None, all_action_pred_probs_2=None):
     # note the are all seq
     dpt_orig, dpt_crop, dpt_joints_orig_px, dpt_com_orig_px, dpt_crop_transf_matx = data_tuple[:5]
     gt_action = data_tuple[-1][-1] # last elem of whole tuple is output, last elem of output is action
@@ -83,6 +84,11 @@ def plot_img_seq(data_tuple, keypt_pred_px, pred_err, action_pred_probs,
                     else keypt_pred_px
     keypt_pred_px_2 = [None for _ in range(dpt_orig.shape[0])] if keypt_pred_px_2 is None \
                     else keypt_pred_px_2
+    
+    all_action_pred_probs_1 = [action_pred_probs for _ in range(dpt_orig.shape[0])] if all_action_pred_probs_1 is None \
+                    else all_action_pred_probs_1
+    all_action_pred_probs_2 = [action_pred_probs_2 for _ in range(dpt_orig.shape[0])] if all_action_pred_probs_2 is None \
+                    else all_action_pred_probs_2
 
     pred_err = [pred_err for _ in range(dpt_orig.shape[0])]
     pred_err_2 = [pred_err_2 for _ in range(dpt_orig.shape[0])]
@@ -92,10 +98,11 @@ def plot_img_seq(data_tuple, keypt_pred_px, pred_err, action_pred_probs,
                          dpt_crop_transf_matx[t], action_gt=gt_action, final_action_pred_probs=action_pred_probs,
                          final_action_pred_probs_2=action_pred_probs_2,
                          keypt_pred_px_1=keypt_pred_px[t], pred_err_1=pred_err[t],
-                         action_pred_probs_1=action_pred_probs, # need to change this to per timestep
+                         action_pred_probs_1=all_action_pred_probs_1[t], # need to change this to per timestep
                          keypt_pred_px_2=keypt_pred_px_2[t], pred_err_2=pred_err_2[t],
-                         action_pred_probs_2=action_pred_probs_2,# need to change this to per timestep
-                         show_aug_plots=False, return_fig=True)#,
+                         action_pred_probs_2=all_action_pred_probs_2[t],# need to change this to per timestep
+                         show_aug_plots=False, return_fig=True, 
+                         frame_curr=t, frame_max=dpt_orig.shape[0])#,
                        #keypt_pred_px=y_px[t], pred_err=err_3d)
     img_arr = np.stack([figure_to_image(plt_fig(t)) for t in range(dpt_orig.shape[0])])
 
@@ -105,10 +112,12 @@ def plot_img_seq(data_tuple, keypt_pred_px, pred_err, action_pred_probs,
 
 def plot_and_show_inline(data_tuple, keypt_pred_px, pred_err, action_pred_probs,
                          keypt_pred_px_2=None, pred_err_2=-1, action_pred_probs_2=None,
+                         all_action_pred_probs_1=None, all_action_pred_probs_2=None,
                          filename=None, filedir='results/plot_data'):
     os.makedirs(filedir, exist_ok=True)
     show_gif_inline(make_gif(plot_img_seq(data_tuple, keypt_pred_px, pred_err, action_pred_probs,
-                                          keypt_pred_px_2, pred_err_2, action_pred_probs_2), fps=2, print_filepath=True,
+                                          keypt_pred_px_2, pred_err_2, action_pred_probs_2,
+                                          all_action_pred_probs_1, all_action_pred_probs_2), fps=2, print_filepath=True,
                              filedir=filedir, filename=filename))
 
     
@@ -153,11 +162,12 @@ class DebugData(object):
         # take a list of samples and return as is, dont do as is
         self.val_data_loader.collate_fn = (lambda k: k)
         
-    def _preload_val_data(self):
+    def _preload_val_data(self, break_val=np.iinfo(np.uint32).max):
         self.val_data = [] #val_data # temporary #[]
-
-        for item in tqdm(self.val_data_loader, desc='Pre-loading validation samples'):
+        for i, item in tqdm(enumerate(self.val_data_loader), total=len(self.val_data_loader), desc='Pre-loading validation samples'):
             self.val_data += item
+            if i >= break_val:
+                break
         return self
     
     def _setup_collator(self):
@@ -199,7 +209,7 @@ class DebugData(object):
         
         
         # 1 => x -> hpe -> y ; 2 => x+z -> hpe_wAct -> y
-        pred_keypts_1, pred_keypts_2, pred_act_probs_1, pred_act_probs_2 = \
+        pred_keypts_1, pred_keypts_2, pred_act_probs_1, pred_act_probs_2, pred_all_act_probs_1, pred_all_act_probs_2 = \
                                 self.forward_pass((depths_packed_seq, actions_seq), type='hpe_hpe_act_har')
         #pred_keypts = self.forward_pass((depths, actions_seq), type='hpe_act')
         pred_keypts_1 = PackedSequence(data=pred_keypts_1,batch_sizes=depths_packed_seq.batch_sizes)
@@ -225,14 +235,18 @@ class DebugData(object):
         
         pred_act_probs_1 = torch.exp(pred_act_probs_1).detach().cpu().numpy().flatten()
         pred_act_probs_2 = torch.exp(pred_act_probs_2).detach().cpu().numpy().flatten()
-        #print(pred_act_probs_1.shape)
-        print(self.model.har.use_unrolled_lstm)
-        quit()
+        pred_all_act_probs_1 = torch.exp(pred_all_act_probs_1).detach().cpu().numpy()
+        pred_all_act_probs_2 = torch.exp(pred_all_act_probs_2).detach().cpu().numpy()
+        # print(pred_act_probs_1.shape)
+        # print(self.model.har.use_unrolled_lstm)
+        # quit()
         
         plot_and_show_inline(self.val_data[index], keypt_pred_px=y_px_pred_1, pred_err=err_3d_1,
                             action_pred_probs=pred_act_probs_1,
                             keypt_pred_px_2=y_px_pred_2, pred_err_2=err_3d_2,
-                            action_pred_probs_2=pred_act_probs_2)
+                            action_pred_probs_2=pred_act_probs_2,
+                            all_action_pred_probs_1=pred_all_act_probs_1,
+                            all_action_pred_probs_2=pred_all_act_probs_2)
     
     
     def forward_pass(self, x, type='hpe'):
@@ -254,10 +268,11 @@ class DebugData(object):
             
             
             # two different inputs to same model
-            z_hpe = self.model.har(PackedSequence(data=y_hpe, batch_sizes=batch_sizes))
-            z_hpe_act = self.model.har(PackedSequence(data=y_hpe_act, batch_sizes=batch_sizes))
+            z_hpe, z_temporal_hpe = self.model.har(PackedSequence(data=y_hpe, batch_sizes=batch_sizes), return_temporal_probs=True)
+            z_hpe_act, z_temporal_hpe_act = self.model.har(PackedSequence(data=y_hpe_act, batch_sizes=batch_sizes), return_temporal_probs=True)
             
-            return (y_hpe, y_hpe_act, z_hpe, z_hpe_act)
+            #print("SHape", z_temporal_hpe.shape)
+            return (y_hpe, y_hpe_act, z_hpe, z_hpe_act, z_temporal_hpe, z_temporal_hpe_act)
         else:
             raise NotImplementedError
     
@@ -268,10 +283,10 @@ class DebugData(object):
 
 if __name__ == "__main__":
     debug_data_obj = DebugData(device=torch.device('cuda'))
-    val_data = debug_data_obj._preload_val_data().val_data
+    val_data = debug_data_obj._preload_val_data(break_val=9).val_data
 
     #val_data_sample = next(iter(debug_data_obj.val_data_loader))
-    debug_data_obj.val_data = val_data
+    #debug_data_obj.val_data = val_data
     #debug_data_obj[0]
     #val_data
-    debug_data_obj[-37]
+    debug_data_obj[8] #debug_data_obj[-37]

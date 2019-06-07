@@ -4,11 +4,131 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cmap
 
-from .data_augmentors import *
+from sklearn.metrics import confusion_matrix
+
+import seaborn as sns
+
+## for use with latex
+# doesn't work with jupyter disabling this for now...
+#plt.rcParams["font.family"] = "Times New Roman"
+
+from .data_augmentors import affineTransform2D, rotateHand2D, affineTransformImg, AugType
 
 '''
     TODO: MOVE TO VIZUAL...py in future!
 '''
+
+def plotImgV2(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, crop_transf_matx, action_gt,
+              final_action_pred_probs,
+              keypt_pred_px_1, pred_err_1, action_pred_probs_1,
+              keypt_pred_px_2=None, pred_err_2=-1, action_pred_probs_2=None,
+              show_aug_plots=False, return_fig=False, final_action_pred_probs_2=None,
+              frame_curr=0, frame_max=0):
+    '''
+        All matrices supplied are homogenous projection matrix must work with
+        homogenous coords so [x, y, 1]^T. for x,y pixels.
+        `dpt_orig` => Original 2D depthmap
+        `keypt_px_orig` => Original (21, 3) keypoint matrix
+        `com_px_orig` => Shape (3,) with [0],[1] => (x_px_coord,y_px_coord) and [2] as dpt_mm
+        `show_aug_plots` => Now must be false, depreciated command
+    '''
+    if show_aug_plots:
+        raise NotImplementedError("Aug Plots Not Implemented Yet.")
+    
+    fig = plt.figure(dpi=250) #150 #, constrained_layout=True #dpi=150 # dpi=200
+
+    # no ax3
+    row_ids = [1]
+    keypt_preds = [keypt_pred_px_1]
+    reg_errs = [pred_err_1]
+    action_probs = [action_pred_probs_1]
+    n_rows = 2
+
+    if ((keypt_pred_px_2 is not None) and (pred_err_2 != -1) and (action_pred_probs_2 is not None)):
+        row_ids += [2]
+        keypt_preds += [keypt_pred_px_2]
+        reg_errs += [pred_err_2]
+        action_probs += [action_pred_probs_2]
+        n_rows = 3
+    
+    ### first row ###
+    ax1 = plt.subplot2grid((n_rows, 10), (0, 0), colspan=4, fig=fig)
+    ax1.imshow(dpt_orig, cmap=cmap.jet)
+    ax1.plot(keypt_px_orig[:,0], keypt_px_orig[:, 1], 'g.') ## linewidth=0 remove line...
+    visualize_joints_2d(ax1, keypt_px_orig, joint_idxs=False)
+    ax1.plot(com_px_orig[0], com_px_orig[1], 'rx', markersize=5)
+    title_str = "Final 3DErr1: %0.1fmm" % pred_err_1
+    title_str += " 3DErr2: %0.1fmm" % pred_err_2 if pred_err_2 > -2 else ""
+    ax1.set_title(title_str, fontsize=8)
+
+    ax2 = plt.subplot2grid((n_rows, 10), (0, 4), colspan=6, fig=fig)
+    #lw  = 2
+    w   = 0.5
+    x   = np.arange(final_action_pred_probs.shape[0]).astype(np.float32)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(x.astype(np.uint32), fontsize=4.5, rotation=45)
+    ax2.bar(x, action_gt, width=w+0.1, align='center', color=cmap.get_cmap('viridis')(0.4), alpha=0.4, label='GT') #cmap.get_cmap('jet')(0.9) #red
+    buff = 0.0 if final_action_pred_probs_2 is None else w/2
+    ax2.bar(x-buff, final_action_pred_probs, width=w, align='center', color=cmap.get_cmap('viridis')(0.1), label='HPE Estimate (1)') # viridis
+    
+    if final_action_pred_probs_2 is not None: 
+        ax2.bar(x+buff, final_action_pred_probs_2, width=w, align='center', color=cmap.get_cmap('viridis')(0.8), 
+                label='HPE_wActCond Estimate (2)')
+        ax2.set_title("Actual: %d, Pred1: %d, Pred2: %d" % (np.argmax(action_gt),
+                                                                            np.argmax(final_action_pred_probs),
+                                                                            np.argmax(final_action_pred_probs_2)), fontsize=8)
+    else:
+        ax2.set_title("Actual: %d, Pred: %d" % (np.argmax(action_gt), np.argmax(final_action_pred_probs)), fontsize=8)
+    ax2.legend(loc=1, prop={'size': 4}) # upper right
+
+    ### second row ###
+    for (row_id, keypt_pred_px, pred_err, action_probs) in zip(row_ids, keypt_preds, reg_errs, action_probs):
+        ax4 = plt.subplot2grid((n_rows, 10), (row_id, 0), colspan=4, fig=fig) #fig.add_subplot(223)
+        keypt_pred_px_crop = affineTransform2D(crop_transf_matx, keypt_pred_px)
+        ax4.imshow(dpt_orig, cmap=cmap.jet)
+        ax4.plot(keypt_pred_px[:,0], keypt_pred_px[:,1], 'b.')
+        visualize_joints_2d(ax4, keypt_pred_px, joint_idxs=False, linestyle='--')
+        ax4.plot(com_px_orig[0], com_px_orig[1], 'rx', markersize=5)
+        ax4.set_title("GTDep. & PredJ", fontsize=8)
+
+        ax5 = plt.subplot2grid((n_rows, 10), (row_id, 4), colspan=3, fig=fig)
+        com_px_crop = affineTransform2D(crop_transf_matx, com_px_orig)
+        keypt_px_crop = affineTransform2D(crop_transf_matx, keypt_px_orig)
+        ax5.imshow(dpt_crop, cmap=cmap.jet)
+        ax5.plot(keypt_px_crop[:,0], keypt_px_crop[:,1], 'g.')
+        ax5.plot(keypt_pred_px_crop[:,0], keypt_pred_px_crop[:,1], 'b.')
+        visualize_joints_2d(ax5, keypt_px_crop, joint_idxs=False)
+        visualize_joints_2d(ax5, keypt_pred_px_crop, joint_idxs=False, linestyle='--')
+        ax5.plot(com_px_crop[0], com_px_crop[1], 'rx', markersize=3)
+        ax5.set_title("CropDep. 3DError: %0.2fmm" % pred_err,fontsize=8)
+
+        ax6 = plt.subplot2grid((n_rows, 10), (row_id, 7), colspan=3, fig=fig)
+        x   = np.arange(action_probs.shape[0])
+        ax6.bar(x, action_probs, width=w, align='center', color=cmap.get_cmap('viridis')(0.7)) # viridis
+        ax6.bar(x, action_gt, width=w+0.1, align='center', color=cmap.get_cmap('viridis')(0.9), alpha=0.4) #cmap.get_cmap('jet')(0.9) #red
+        ax6.set_title("Hist. frame: %d of %d" % (frame_curr, frame_max),fontsize=8)
+
+
+
+            
+
+    plt.suptitle("Plot") #fontsize=14
+    if not return_fig:
+        plt.tight_layout(pad=0.2, rect=[0,0,1,0.95]) 
+        #plt.tight_layout(pad=2.0, rect=[0,0.05,1,1])
+        #plt.tight_layout() #(pad=2.0, rect=[0,0.05,1,1])
+        plt.show()
+    else:
+        plt.tight_layout(pad=0.2, rect=[0,0,1,0.95]) #0.95 #(pad=2.0, rect=[0,0.05,1,1])
+        #plt.show()
+        # plt.gcf().savefig('test.pdf',
+        #             format='pdf',
+        #             dpi=300,
+        #             transparent=True,
+        #             bbox_inches='tight',
+        #             pad_inches=0.01)
+        #plt.show()
+        return plt.gcf()
 
 
 def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, 
@@ -164,3 +284,16 @@ def _draw2dseg(ax, annot, idx1, idx2, c='r', alpha=1, linestyle='-'):
         c=c,
         alpha=alpha,
         linestyle=linestyle)
+
+
+
+# if __name__ == "__main__":
+# import numpy as np
+# plotImgV2(np.random.randn(480,640), 
+#             np.random.randn(128,128),
+#             np.random.randn(21,3),
+#             np.random.randn(3),np.eye(3),
+#             keypt_pred_px=np.random.randn(21,3), pred_err=2)
+import numpy as np; from data_utils.debug_plot import plotImgV2;
+# plotImgV2(np.random.randn(480,640), np.random.randn(128,128),np.random.randn(21,3),np.random.randn(3),np.eye(3),
+#           np.eye(45)[5], np.arange(45)/45, np.random.randn(21,3), 2, np.arange(45)/45
