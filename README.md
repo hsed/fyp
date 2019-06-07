@@ -589,3 +589,86 @@ during fine tuning there are newer batch sizes and many different sizes for whic
 for some models it can be as low as 2 or 4. In this case its best to set `track_running_stats` to FALSE this is same as setting `training` to FALSE. this way always its ensured that EXACT CURRENT batch_size is used to calc mean and variance so a large change in batch_sizes wont cause big issues so this is equivalent to train mode but then the training can still occur. nonetheless training is training of affine params so if we use some model with action condition that that too is disabled. and it degenerated to exactly as training = false
 
 for this you should basically loop around all modules in for loop fashion and for every nn.batchnorm2d found simply set `track_running_stats` to FALSE only do this for certain version numbers..... so like maybe v4d first then v3d and then maybe v2d as v2d2
+
+h consistent...
+
+New meeting notes need to do:
+
+- clarify film in report, why oyu used it the justification, hoe does it compare vs the other methods how is it better etc. suport why you used it. where its from visual reasoning,,,
+
+- dont put all ur owkr as sotry in main flow talk about most other stuff in discussion section
+
+- try to compare in objective ways i.e. fairly
+- talk about main stuff of report in main section i.e. type 1 vs type 2 so imrpovments over type 2
+- the test time imrpovements you show should rather be meaningful
+- in ideal case for test time if you have two sequential models and you get second z the second z value should be better if its not then weighted average doesnt really make much sense here...
+- for training need to talk abiut loss term balance how to achieve this etc...
+
+Anil said:
+- focus all your results on a big table with types of concatenation etc, training acc etc.
+
+TK Kim said:
+- more important now you focus on type 2
+- temporal contraints vs attention.. does attention fit into your story?? bone loss is definately orthogonal to your story so dont do bone loss you can try temporal loss but that still be away from ur story,,, idk
+- Don't think type 2 is just a simple enhancement with enough evidence you can provide good support on why you used type 2 how it worked etc
+- also if action acc doesn improve for type 2 then explain why you think, maybe say loss balance or maybe to do with the gt keypoints are not very good annotation..
+- DONT TRY TO SELL EVERYTHING IN EQUAL MANNER SELL TYPE 2 MORE THAN ANY THING ELSE complete this story
+
+- talk about other stuff in discussion
+
+- temporal consistency etc must be tried on type 2
+
+
+
+Generally in real life u will try all sorts of combinations
+But now due to lack of time or for fyp project scope limitations so incremental improvements:
+so Type 1
+type2
+type2+atten or type2+temporal_loss
+type2+atten+temporal_loss
+type2+atten+temporal_loss+(ensemble or test time imrpov)
+
+
+General Structure:
+- Intro
+- Background
+- Implementation
+  - Finalising HPE:
+    - all fine tuning depth cropping etc,,,
+  - Finalising HAR: all lstm
+    - all lstm setup, 
+    - max timelengthm unrolled version lr
+    - implementation etc
+  - Minimal conditioning in HPE -- HPEwActCond (talk briefly here, film for visual reasoning)
+  - Minimal attention in HAR -- HARwAttention (talk briefly here)
+  - Simple Baseline Combination --> Sequential Model
+    - setup simple direct test time results -- trivial baseline
+    - Use of HPE+HPEwActCond (talk briefly here or in detail?)
+    - Show test time combination of two models, best with HPEwActCond
+    - Some more insights of this dual model, use of hpewAct, .. quiprob act conditions,... (talk briefly here)
+  - Simple direct training
+    - setup, lr issues, w.decay issues, combined loss fn issues... (talk briefly here)
+    - get best model from here....
+  - Simple direct training with action type 2 THE MAIN CONTRIB
+    - selection of best hpewActCond for pre-training (select using 30 ep versions? or directly select based on test time perf)
+    - idea, look for justification, see hopes from test time improvements and ideas,
+    - show simple extention architecture
+    - show new val curves it imrpoves over type 1 need to somehow show it is a just improvement!
+  - action type 2 training with the attention module present...
+    - better or worse does it improve both?
+  - temporal loss term
+
+Ablation Studies // Discusions // Further details
+- best method to do concat
+- best pre-train model to use for hpe_wActCond
+- a setup of params and loss fn alpha selection
+- simething else?
+
+
+
+Targets per day
+for 5/6/2019
+  - make sure to generate all plots atleast for film
+  - generate all plots for all different attention mechanisms
+  - write some final equation on attention
+  - write equatio on film
