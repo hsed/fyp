@@ -22,7 +22,8 @@ class WriterTensorboardX():
         self.step = step
     
     def close(self):
-        self.writer.close()
+        if self.writer is not None:
+            self.writer.close()
 
     def __getattr__(self, name):
         """

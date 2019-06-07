@@ -17,6 +17,7 @@ from datasets import ExtendedDataType as DT, FHADCameraIntrinsics as CAM, \
                              MSRACameraIntrinsics as CAM2
 
 from .debug_plot import plotImg
+from copy import deepcopy
 
 from sklearn.decomposition import PCA
 
@@ -290,7 +291,8 @@ class TransformerBase(object):
     def __init__(self, num_joints = 21, world_dim = 3, cube_side_mm = 200,
                  cam_intrinsics = CAM, dep_params = DepParam, 
                  aug_lims=Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180), 
-                 crop_depth_ver=0, crop_pad:Tuple[int or float,int or float,float] = (40,40,50.), debug_mode=False):
+                 crop_depth_ver=0, crop_pad:Tuple[int or float,int or float,float] = (40,40,50.), debug_mode=False,
+                 pca_components=30):
         self.num_joints = num_joints
         self.world_dim = world_dim
 
@@ -310,6 +312,8 @@ class TransformerBase(object):
         self.crop_depth_ver = crop_depth_ver
 
         self.crop_pad = crop_pad
+
+        self.pca_components = pca_components # not really used, but only here to prevent errors and used by metric_init
 
         self.debug_mode = debug_mode
 
@@ -355,6 +359,61 @@ class JointCenterer(TransformerBase):
 
         return sample
 
+class JointSeqBoneNormaliserCenterer(TransformerBase):
+    '''
+        
+        A simple transformer for normalising bone lengtha
+        It is an irreversable transformer once used original bone length info is lost permanently
+
+        Only centering is performed, no standardisation!
+
+    '''
+    def __init__(self, flatten_shape=True, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+        self.links = \
+            [[0,0,0,0,0], [1,2,3,4,5], [6,9,12,15,18], [7,10,13,16,19], [8,11,14,17,20]]
+
+    def __call__(self, sample):
+        
+        #com = sample[DT.COM]
+        #dpt_range = self.crop_shape3D_mm[2]
+        # first center w.r.t com
+        joints_seq = sample[DT.JOINTS_SEQ]#.reshape(-1, self.num_joints, self.world_dim)
+        coms_seq = sample[DT.COM_SEQ]
+        
+        sample[DT.JOINTS_SEQ] = joints_seq - coms_seq[:, np.newaxis, :]
+
+        #print("ORIG SHAPE:", sample[DT.JOINTS_SEQ].shape)
+        tmp_seq = deepcopy(sample[DT.JOINTS_SEQ])
+        output_pose_seq = np.zeros_like(tmp_seq)
+
+        for frame_idx in range(tmp_seq.shape[0]):
+            output_pose = output_pose_seq[frame_idx]
+            tmp = tmp_seq[frame_idx]
+            output_pose[0] = tmp[0]
+
+            for i in range(0, len(self.links) - 1):
+                diff_vec = tmp[self.links[i+1]] - tmp[self.links[i]]
+                diff_vec = (diff_vec / np.linalg.norm(diff_vec, axis=1).reshape(-1,1)) # take diff along 3D vals only
+                output_pose[self.links[i+1]] = output_pose[self.links[i]] + diff_vec
+
+            output_pose_seq[frame_idx] = output_pose
+        sample[DT.JOINTS_SEQ] = output_pose_seq.reshape(-1, self.num_joints*self.world_dim)
+            #return output_pose
+        # only perform aug adjustments if aug actually happened
+        # if DT.AUG_MODE in sample:
+        #     if sample[DT.AUG_MODE] == AugType.AUG_TRANS:
+        #         # add augmentation offset
+        #         com = com + sample[DT.AUG_PARAMS]
+        #     if sample[DT.AUG_MODE] == AugType.AUG_SC:
+        #         # scale dpt_range accordingly
+        #         dpt_range = dpt_range*sample[DT.AUG_PARAMS]
+        
+        ## broadcasting is done automatically here -- centering: CoM is new origin in 3D space
+        #sample[DT.JOINTS] = sample[DT.JOINTS] - sample[DT.COM] #com
+
+        return sample
+
 class SequenceLimiter(TransformerBase):
     '''
         Limit number of frames
@@ -363,7 +422,12 @@ class SequenceLimiter(TransformerBase):
         super().__init__(*args, **kwargs) # initialise the super class
         self.max_length = max_length
 
+        #self.max_possible = 0
+
     def __call__(self, sample):
+        # if sample[DT.DEPTH_SEQ].shape[0] > self.max_possible:
+        #     self.max_possible = sample[DT.DEPTH_SEQ].shape[0]
+        #     print("[LIM]: FOUND MAX SEQ %d" % self.max_possible)
         if self.max_length < 0:
             return sample  # bypass
         else:
@@ -519,6 +583,21 @@ class ActionOneHotEncoder(TransformerBase):
 
         return sample
 
+class ActionSequenceGenerator(TransformerBase):
+    '''
+        A simple transformer for generating a list of vectors where the action index or one-hot vector
+        is expanded to match the timeframe dimension of joints_seq, requires joints seq to be present
+        IF you wish to limit action frames per sequence then add this transformation AFTER sequence limiter  
+        If you wish to use one-hot encoding place this transformer AFTER one-hot encoder
+        In Action_idx / Action_one-hot, joints_seq => Out Action_seq matching outer dim as joints_seq
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+
+    def __call__(self, sample):
+        sample[DT.ACTION_SEQ] = np.asarray([sample[DT.ACTION]]*sample[DT.JOINTS_SEQ].shape[0])
+
+        return sample
 
 
 class DepthCropper(TransformerBase):
@@ -582,7 +661,8 @@ class DepthCropper(TransformerBase):
             crop3D_mm=self.crop_shape3D_mm,
             out2D_px=self.out_sz_px,
             crop_ver=self.crop_depth_ver,
-            crop_pad=self.crop_pad
+            crop_pad=self.crop_pad,
+            mm2px_fn=self.mm2px,
         )
 
         #if self.debug_mode:
@@ -622,6 +702,7 @@ class DepthSeqCropper(TransformerBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs) # initialise the super class
         self.depth_cropper = DepthCropper(*args, **kwargs) # for single depth
+        self.return_debug_data = False
     
     def __call__(self, sample):
         ## note everything is in sequences here...
@@ -637,11 +718,25 @@ class DepthSeqCropper(TransformerBase):
                 for (dpt, keypt, com) in zip(sample[DT.DEPTH_SEQ], sample[DT.JOINTS_SEQ], sample[DT.COM_SEQ])
         )
         
-        zipped = zip(*((cdict[DT.DEPTH], cdict[DT.JOINTS], cdict[DT.COM]) for cdict in transformed_gen))
+        zipped = zip(*((cdict[DT.DEPTH], cdict[DT.JOINTS], cdict[DT.COM],
+                        cdict[DT.DEPTH_CROP], cdict[DT.JOINTS_ORIG_PX],
+                        cdict[DT.COM_ORIG_PX], cdict[DT.CROP_TRANSF_MATX],
+                        cdict[DT.DEPTH_ORIG], cdict[DT.COM_ORIG_MM]) for cdict in transformed_gen)) \
+                            if self.return_debug_data else \
+                                zip(*((cdict[DT.DEPTH], cdict[DT.JOINTS], cdict[DT.COM]) for cdict in transformed_gen))
 
         sample[DT.DEPTH_SEQ] = np.stack(next(zipped))
         sample[DT.JOINTS_SEQ] = np.stack(next(zipped)) # should be unchanged
         sample[DT.COM_SEQ] = np.stack(next(zipped)) # should be unchanged
+        
+        
+        sample[DT.DEPTH_CROP_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.JOINTS_ORIG_PX_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.COM_ORIG_PX_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.CROP_TRANSF_MATX_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.DEPTH_ORIG_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.COM_ORIG_MM_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+
         #print("T2: %fs" % (10e-9*(time.time_ns() - t)))
         return sample
 
@@ -871,7 +966,9 @@ class PCATransformer(TransformerBase):
 
         self.device = torch.device('cpu')   # this is needed so keep as in
         self.dtype = dtype
-        self.out_dim = n_components
+        self.out_dim = n_components # kept here for compatibility NOTE if you change here change globally as well!
+
+        #assert self.out_dim == self.pca_components, "Possible pca component dim mismatch!"
 
         self.use_cache = use_cache
         self.overwrite_cache = overwrite_cache
@@ -879,6 +976,7 @@ class PCATransformer(TransformerBase):
 
         if self.use_cache and not self.overwrite_cache:
             self._load_cache()
+        
                 
                 
                     
@@ -897,6 +995,23 @@ class PCATransformer(TransformerBase):
         # note our matrix is U.T
         # though y_data is 1D array matmul automatically handles that and reshape y to col vector
         sample[DT.JOINTS] = np.matmul(self.transform_matrix_np, (sample[DT.JOINTS] - self.mean_vect_np))
+
+        return sample
+
+    def undo(self, sample):
+        '''
+            later make this a dictionary
+            single y_data sample is 1D
+        '''
+        if self.transform_matrix_np is None:
+            raise RuntimeError("Please call fit first before calling transform.")
+        
+        #y_data = sample[1]
+        
+        # automatically do broadcasting if needed, but in this case we will only have 1 sample
+        # note our matrix is U.T
+        # though y_data is 1D array matmul automatically handles that and reshape y to col vector
+        sample[DT.JOINTS] = np.matmul(self.transform_matrix_np.T, sample[DT.JOINTS]) + self.mean_vect_np
 
         return sample
     
@@ -1020,6 +1135,20 @@ class PCASeqTransformer(PCATransformer):
         # basically we need to call some sort of np.stack but maybe it can be done in a better way?
         return sample
 
+class PCAUndoSeqTransformer(PCATransformer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    # all other methods directly use base methods
+    
+    def __call__(self, sample):
+        #sample[DT.JOINTS]
+        sample[DT.JOINTS_SEQ] = \
+            np.stack(super(PCAUndoSeqTransformer, self).undo({DT.JOINTS: joints})[DT.JOINTS] for joints in sample[DT.JOINTS_SEQ])
+        # this will be extended  by child
+        # basically we need to call some sort of np.stack but maybe it can be done in a better way?
+        return sample
+
 class ToTuple(object):
     '''
         Final transformer to convert dictionary to tuple
@@ -1040,12 +1169,17 @@ class ToTuple(object):
         JOINTS_ACTION_SEQ = 'joints_action_seq'
         DEPTH_JOINTS_SEQ = 'depth_joints_seq'
         DEPTH_JOINTS_ACTION_SEQ = 'depth_joints_action_seq'
+        DEPTH_JOINTS_JOINTS_ACTION_SEQ = 'depth_joints_joints_action_seq'
+        DEPTH_ACTION_JOINTS_ACTION_SEQ = 'depth_action_joints_action_seq'
+        DEPTH_ACTIONSEQ_JOINTS_ACTION_SEQ = 'depth_actionseq_joints_action_seq'
+        DEPTH_ACTIONSEQ_JOINTS_JOINTS_ACTION_SEQ = 'depth_actionseq_joints_joints_action_seq'
         JOINTS = 'joints'
         JOINTS_ACTION = 'joints_action'
         DEPTH_JOINTS = 'depth_joints'
         DEPTH_JOINTS_ACTION = 'depth_joints_action'
         DEPTH_ACTION_JOINTS = 'depth_action_joints'
         DEPTH_JOINTS_DEBUG = 'depth_joints_debug'
+        DEPTH_JOINTS_SEQ_DEBUG = 'depth_joints_seq_debug'
 
 
     def __init__(self, extract_type = 'joints_action_seq'):
@@ -1072,6 +1206,14 @@ class ToTuple(object):
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_SEQ) \
             else (sample[DT.DEPTH_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_ACTION_SEQ) \
+            else (sample[DT.DEPTH_SEQ], sample[DT.JOINTS_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_JOINTS_ACTION_SEQ) \
+            else (sample[DT.DEPTH_SEQ], sample[DT.ACTION], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_ACTION_JOINTS_ACTION_SEQ) \
+            else (sample[DT.DEPTH_SEQ], sample[DT.ACTION_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_ACTIONSEQ_JOINTS_ACTION_SEQ) \
+            else (sample[DT.DEPTH_SEQ], sample[DT.ACTION_SEQ], sample[DT.JOINTS_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_ACTIONSEQ_JOINTS_JOINTS_ACTION_SEQ) \
             else (sample[DT.JOINTS]) \
                 if (self.extract_type == ToTuple.ET.JOINTS) \
             else (sample[DT.JOINTS], sample[DT.ACTION]) \
@@ -1085,6 +1227,13 @@ class ToTuple(object):
                   sample[DT.COM_ORIG_MM], \
                   (sample[DT.DEPTH], sample[DT.ACTION]), sample[DT.JOINTS]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_DEBUG) \
+            else (sample[DT.DEPTH_ORIG_SEQ], sample[DT.DEPTH_CROP_SEQ], sample[DT.JOINTS_ORIG_PX_SEQ], \
+                  sample[DT.COM_ORIG_PX_SEQ], sample[DT.CROP_TRANSF_MATX_SEQ], \
+                  None, None, None, \
+                  None, None, sample[DT.NAME_SEQ], \
+                  sample[DT.COM_ORIG_MM_SEQ], \
+                  (sample[DT.DEPTH_SEQ], sample[DT.ACTION_SEQ], sample[DT.JOINTS_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION])) \
+                if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_SEQ_DEBUG) \
             else (sample[DT.DEPTH], sample[DT.JOINTS], sample[DT.ACTION]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_ACTION) \
             else (sample[DT.DEPTH], sample[DT.ACTION], sample[DT.JOINTS]) \

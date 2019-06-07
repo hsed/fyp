@@ -122,6 +122,53 @@ def keyptsToBounds3D(com, keypt_cent_mm, fx, fy, x_crop_pad_mm=30., y_crop_pad_m
     return xstart, xend, ystart, yend, zstart, zend
 
 
+def keyptsToBounds3DV2(keypt_mm, fx, fy, mm2px_fn, x_crop_pad_mm=30., y_crop_pad_mm=30., depth_pad_mm=100.):
+    """
+        method = 1
+        TODO: add details...
+        similar to method0 but bounds are dependent on farther of farthest x and y
+        from com. also for z we use farthest com
+
+        from deep-prior-pp
+    """
+    # TODO: change this function for FHAD, no Z thresholding
+    # and for region, project keypoints to px coords then extract
+    # rect boundary with 40px padding on top,bottom,left,right w.r.t the extremum
+    # coords (e.g. leftmost joint, topmost joint etc)
+    # if np.isclose(com[2], 0.):
+    #     raise RuntimeError( "Error: CoM ill-defined! This is not implemented")
+    
+    # xstart_mm, xstart_mm_idx = keypt_mm[:, 0].min(), keypt_mm[:, 0].argmin() 
+    # xend_mm, xend_mm_idx = keypt_mm[:, 0].max(), keypt_mm[:, 0].argmax()
+
+    # ystart_mm, ystart_mm_idx = keypt_mm[:, 1].min(), keypt_mm[:, 1].argmin()
+    # yend_mm, yend_mm_idx = keypt_mm[:, 1].max(), keypt_mm[:, 1].argmax()
+
+    # # Note this should be a float
+    # zstart_mm = min(0, keypt_mm[:, 2].min() - depth_pad_mm)
+    # zend_mm = keypt_mm[:, 2].max() + depth_pad_mm
+
+    # #return tuple(int(item) for item in (xstart, xend, ystart, yend, zstart, zend))
+
+    # zstart = int(zstart_mm)
+    # zend = int(zend_mm)
+    # xstart = int(np.floor((xstart_mm * keypt_mm[xstart_mm_idx, 2] / fx) / keypt_mm[xstart_mm_idx, 2]*fx+0.5))
+    # xend = int(np.floor((xend_mm * keypt_mm[xend_mm_idx, 2] / fx) / keypt_mm[xend_mm_idx, 2]*fx+0.5))
+    # ystart = int(np.floor((ystart_mm * keypt_mm[ystart_mm_idx, 2] / fy) / keypt_mm[ystart_mm_idx, 2]*fy+0.5))
+    # yend = int(np.floor((yend_mm * keypt_mm[yend_mm_idx, 2] / fy) / keypt_mm[yend_mm_idx, 2]*fy+0.5))
+
+    xstart = mm2px_fn(keypt_mm[keypt_mm[:, 0].argmin(), :] - np.array([x_crop_pad_mm, 0, 0]))[0]
+    xend = mm2px_fn(keypt_mm[keypt_mm[:, 0].argmax(), :] + np.array([x_crop_pad_mm, 0, 0]))[0]
+
+    ystart = mm2px_fn(keypt_mm[keypt_mm[:, 1].argmin(), :] - np.array([0, y_crop_pad_mm, 0]))[1]
+    yend = mm2px_fn(keypt_mm[keypt_mm[:, 1].argmax(), :] + np.array([0, y_crop_pad_mm, 0]))[1]
+
+    zstart = min(0, keypt_mm[:, 2].min() - depth_pad_mm)
+    zend = keypt_mm[:, 2].max() + depth_pad_mm
+    
+    return tuple(int(item) for item in (xstart, xend, ystart, yend, zstart, zend))
+
+
 
 def keyptsToBounds2D(keypt_px, com_px, x_crop_pad_px=40, y_crop_pad_px=40, depth_pad_mm=50.):
     """
@@ -206,6 +253,36 @@ def keyptsToBounds2DV2(keypt_px, com_px, x_crop_pad_px=40, y_crop_pad_px=40, dep
     
     return xstart, xend, ystart, yend, zstart, zend
 
+def keyptsToBounds2DV3(keypt_px, x_crop_pad_px=40, y_crop_pad_px=40, depth_pad_mm=50.):
+    """
+        method = 2
+        `keypt_px` orig keypts in px coords
+        `size` (x,y,z) extent of the source crop volume in mm
+        `return` xstart, xend, ystart, yend, zstart, zend as px idx to crop
+
+        from deep-prior-pp
+    """
+    # TODO: change this function for FHAD, no Z thresholding
+    # and for region, project keypoints to px coords then extract
+    # rect boundary with 40px padding on top,bottom,left,right w.r.t the extremum
+    # coords (e.g. leftmost joint, topmost joint etc)
+
+    ## new doesnt case about CoM
+
+    xstart = (keypt_px[:, 0].min() - x_crop_pad_px)
+    xend = (keypt_px[:, 0].max() + x_crop_pad_px)
+
+    ystart = (keypt_px[:, 1].min() - y_crop_pad_px)
+    yend = (keypt_px[:, 1].max() + y_crop_pad_px)
+
+    # Note this should be a float
+    zstart = min(0, keypt_px[:, 2].min() - depth_pad_mm)
+    zend = keypt_px[:, 2].max() + depth_pad_mm
+
+    return tuple(int(item) for item in (xstart, xend, ystart, yend, zstart, zend))
+
+
+
 def getCrop(dpt, xstart, xend, ystart, yend, zstart, zend, thresh_z=True, background=0):
     """
         Crop patch from image
@@ -259,7 +336,7 @@ def resizeCrop(crop, sz, interpol_method=cv2.INTER_NEAREST):
 
 def cropDepth2D(depth_img, keypt_px, com_px, keypt_mm, com_mm, 
                 fx, fy, crop3D_mm=(200, 200, 200), out2D_px = (128, 128),
-                crop_ver=0, crop_pad:tuple=(40, 40, 50.)):
+                crop_ver=0, crop_pad:tuple=(40, 40, 50.), mm2px_fn=None):
     """
         from deep-prior
         Crop area of hand in 3D volumina, scales inverse to the distance of hand to camera
@@ -291,8 +368,15 @@ def cropDepth2D(depth_img, keypt_px, com_px, keypt_mm, com_mm,
     elif crop_ver == 3:
         xstart, xend, ystart, yend, zstart, zend = \
             keyptsToBounds2DV2(keypt_px, com_px, x_crop_pad_px=crop_pad[0], y_crop_pad_px=crop_pad[1], depth_pad_mm=crop_pad[2])
-
-    
+    elif crop_ver == 4:
+        xstart, xend, ystart, yend, zstart, zend = \
+            keyptsToBounds2DV3(keypt_px, x_crop_pad_px=crop_pad[0], y_crop_pad_px=crop_pad[1], depth_pad_mm=crop_pad[2])
+    elif crop_ver == 5:
+        xstart, xend, ystart, yend, zstart, zend = \
+            keyptsToBounds3DV2(keypt_mm, fx, fy, mm2px_fn, x_crop_pad_mm=crop_pad[0], y_crop_pad_mm=crop_pad[1], 
+                               depth_pad_mm=crop_pad[2])
+    else:
+        raise NotImplementedError("Unimplemented cropping procedure (version requested: %s)" % str(crop_ver))
     # crop patch from source
     # crops a 2D image using CoM bounds
     # The x,y bounds are in terms of pixel indices so top-left is 0,0 and 
@@ -306,8 +390,14 @@ def cropDepth2D(depth_img, keypt_px, com_px, keypt_mm, com_mm,
                 if depth_img is not None else None
     cropped_resized = resizeCrop(cropped, out2D_px) \
                         if depth_img is not None else None
-    transform_matx = get2DTransformMatx(xstart, xend, ystart, yend, out2D_px)
-
+    #transform_matx_orig = get2DTransformMatx(xstart, xend, ystart, yend, out2D_px)
+    # new: we now use opencv to generatee the correct and accurate transform matrix
+    # that also takes into account distortion so points appear a lot better now.
+    new_shape = (128, 128) # TODO: maybe make this a param?
+    pt_triangle_orig = np.float32([[xstart, ystart], [xend, ystart], [xstart, yend]])
+    pt_triangle_cropped = np.float32([[0,0], [new_shape[0]-1, 0], [0, new_shape[1]-1]])
+    transform_matx = cv2.getAffineTransform(pt_triangle_orig, pt_triangle_cropped)
+    transform_matx = np.float32([transform_matx[0,:], transform_matx[1,:], [0.,0.,1.]])
     assert(out2D_px[0] == out2D_px[1])    # only 1:1 supported for now
 
     return cropped_resized, transform_matx

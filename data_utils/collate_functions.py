@@ -238,5 +238,7 @@ class CollateCustomSeqBatch(object):
         inputs = tuple(sorted_arr[:(self.inputs_seq+self.action_in)]) if (self.inputs_seq+self.action_in) > 1 else sorted_arr[0]
         outputs = tuple(sorted_arr[(self.inputs_seq+self.action_in):]) if (self.outputs_seq+self.action_out) > 1 else sorted_arr[-1]
 
+        #print("COLLATE FN:")
+        #print("ins/ outs:", inputs[0].data.shape, outputs[0].data.shape)
         # possibilities: (tuple, tuple) ; (tensor, tuple) ; (tuple, tensor) ; (tensor, tensor)
         return (inputs, outputs)

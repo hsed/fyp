@@ -7,7 +7,7 @@ from datasets import BaseDataType, HandPoseActionDataset, \
 
 from .base_data_loader import BaseDataLoader
 from .data_transformers import *
-from .collate_functions import CollateJointsSeqBatch, CollateDepthJointsBatch
+from .collate_functions import CollateJointsSeqBatch, CollateDepthJointsBatch, CollateCustomSeqBatch
 
 from ._dp_transformers import DeepPriorXYTransform, DeepPriorYTransform
 
@@ -129,31 +129,7 @@ def _check_pca(data_dir, pca_transformer, data_transforms,
     ## save these to provide to model later
     return pca_transformer.transform_matrix_np, pca_transformer.mean_vect_np
 
-
-class MnistDataLoader(BaseDataLoader):
-    """
-    MNIST data loading demo using BaseDataLoader
-    """
-    def __init__(self, data_dir, batch_size, shuffle, validation_split, num_workers, training=True):
-        trsfm = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-            ])
-        self.data_dir = data_dir
-        self.dataset = datasets.MNIST(self.data_dir, train=training, download=True, transform=trsfm)
-        super(MnistDataLoader, self).__init__(self.dataset, batch_size, shuffle, validation_split, num_workers)
-
-
-
-'''
-    make a data loader class here that acceps whether har or hpe and train or test
-    then from then onwards all transformers can be defined WITHIN the scope of loader as shown here
-    even the dataset!
-
-    so u can init the correct transformer or even tell it which mode u r in hpe/har
-
-'''
-
+### COMBINED DATA LOADER ###
 class CombinedDataLoader(BaseDataLoader):
     '''
         To load joints and actions of same batch_size but variable sequence length for joints
@@ -166,8 +142,8 @@ class CombinedDataLoader(BaseDataLoader):
 
     def __init__(self, data_dir, dataset_type, batch_size, shuffle, 
             validation_split=0.0, num_workers=1, debug=False, reduce=False, pad_sequence=False,
-            max_pad_length=-1, randomise_params=True,
-            use_pca=False, forward_type=0):
+            max_pad_length=-1, randomise_params=True, use_wrist_com=False,
+            use_pca=False, forward_type=0, gen_action_seq=False):
         
         '''
             input_types: depth, keypts, 
@@ -182,11 +158,25 @@ class CombinedDataLoader(BaseDataLoader):
         '''
         t = time.time()
 
+        if forward_type == -1:
+            # FOR DEBUGGING
+            print('[DATALOADER] DEBUG MODE: ALL DEBUG OUTPUTS WILL BE RETURNED')
+            load_depth = True
+            inputs, outputs = 3, 2 # (depth, action_seq, joints), (joints, action)
+            action_in, action_out = False, True
+            data_extract_type = 'depth_joints_seq_debug'
+            gen_action_seq = True
         if forward_type == 0:
             load_depth = True
-            inputs, outputs = 1, 2
-            action_in, action_out = False, True
-            data_extract_type = 'depth_joints_action_seq' # need to adjust this to support new collate fn! #depth_actions_joints_action_seq
+            if not gen_action_seq:
+                inputs, outputs = 1, 2
+                action_in, action_out = False, True
+                data_extract_type = 'depth_joints_action_seq'
+                #raise NotImplementedError
+            else:
+                inputs, outputs = 3, 2 #2, 2
+                action_in, action_out = False, True #note for inputs action is a SEQ so its still False,True
+                data_extract_type = 'depth_actionseq_joints_joints_action_seq' # 'depth_joints_action_seq' # need to adjust this to support new collate fn! #depth_actions_joints_action_seq
             #raise NotImplementedError
         elif forward_type == 1:
             raise NotImplementedError
@@ -206,8 +196,9 @@ class CombinedDataLoader(BaseDataLoader):
             'cam_intrinsics': FHADCameraIntrinsics,
             'dep_params': DepthParameters,
             'aug_lims': Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180),
-            'crop_depth_ver': 2, #crop_depth_ver,
+            'crop_depth_ver': 2, #crop_depth_ver use 4 or 5!,
             'crop_pad': tuple([40, 40, 100.]), # tuple required for transformers, but yaml loads as list by def
+            'pca_components': 30,
             'debug_mode': debug,
         }
 
@@ -215,8 +206,9 @@ class CombinedDataLoader(BaseDataLoader):
         #ActionOneHotEncoder(action_classes=45)
         transform_list = [
                             SequenceLimiter(max_length=max_pad_length, **trnsfrm_base_params),
-                            # ActionSequenceGenerator(**trnsfrm_base_params),
-                            JointSeqReshaper(**trnsfrm_base_params)
+                            ActionOneHotEncoder(**trnsfrm_base_params),
+                            ActionSequenceGenerator(**trnsfrm_base_params), # used only depending on ToTuple extract_type
+                            JointSeqReshaper(**trnsfrm_base_params),
                         ]
         transform_list += [
                         DepthSeqCropper(**trnsfrm_base_params),
@@ -227,44 +219,77 @@ class CombinedDataLoader(BaseDataLoader):
                             ToTuple(extract_type=data_extract_type)
                         ]
         
-        if use_pca:
-            pca_components = 30 # don't change
-            pca_data_aug = None 
-            pca_size = 200000
-            use_pca_cache = True
-            pca_overwrite_cache = False
-            pca_transformer = PCASeqTransformer(n_components=pca_components,
+        # create this nonetheless because it is needed by metric initialiser so even when use pca is false
+        pca_components = trnsfrm_base_params['pca_components']
+        pca_data_aug = None 
+        pca_size = 200000
+        use_pca_cache = True
+        pca_overwrite_cache = False
+        pca_transformer = PCASeqTransformer(n_components=pca_components,
                                             use_cache=use_pca_cache,
                                             overwrite_cache=pca_overwrite_cache)
+        pca_trnsfrms = _create_pca_transforms(use_orig_transformers_pca=False, pca_data_aug=pca_data_aug, 
+                                    trnsfrm_base_params=trnsfrm_base_params)
+        self.pca_weights_np, self.pca_bias_np = _check_pca(data_dir, pca_transformer, pca_trnsfrms,
+                                                        trnsfrm_base_params, use_msra=False,
+                                                        y_pca_len=pca_size,
+                                                        randomise_params=randomise_params)
+        # pca_transformer_undo = PCAUndoSeqTransformer(n_components=pca_components,
+        #                                              use_cache=use_pca_cache,
+        #                                              overwrite_cache=pca_overwrite_cache)
+        if use_pca:
+            # to make things easier either have pca out for both or for neither
+            # this helps when training combined fashion
+            print('[DATALOADER] Adding pca transformer to transform list for both val & train transforms')
             transform_list.insert(-1, pca_transformer)
-            pca_trnsfrms = _create_pca_transforms(use_orig_transformers_pca=False, pca_data_aug=pca_data_aug, 
-                                        trnsfrm_base_params=trnsfrm_base_params)
-            self.pca_weights_np, self.pca_bias_np = _check_pca(data_dir, pca_transformer, pca_trnsfrms,
-                                                            trnsfrm_base_params, use_msra=False,
-                                                            y_pca_len=pca_size,
-                                                            randomise_params=randomise_params)
-            trnsfrm_base_params['pca_components'] = pca_components
+            # transform_list.insert(-1, pca_transformer_undo)
 
         trnsfrm = transforms.Compose(transform_list)
 
         self.dataset = HandPoseActionDataset(data_dir, 'train', 'har', transform=trnsfrm, reduce=reduce,
-                                             retrieve_depth=load_depth, preload_depth=False)
+                                             retrieve_depth=load_depth, preload_depth=False, wrist_com=use_wrist_com)
 
         if validation_split > 0.0:
             self.val_dataset = HandPoseActionDataset(data_dir, 'train', 'har',
                                                 transform=trnsfrm, reduce=reduce,
-                                                retrieve_depth=load_depth, preload_depth=False)
+                                                retrieve_depth=load_depth, preload_depth=False, wrist_com=use_wrist_com)
         elif validation_split < 0.0:
-            print("[DATALOADER] Setting Val_Set as test dataset")
+            print("[DATALOADER] Setting Val_Set as test dataset with val_split %0.2f" % validation_split)
             # for prediction on train data simply change train to test
             self.val_dataset = HandPoseActionDataset(data_dir, 'test', 'har',
                                                 transform=trnsfrm, reduce=reduce,
-                                                retrieve_depth=load_depth, preload_depth=False)
+                                                retrieve_depth=load_depth, preload_depth=False, wrist_com=use_wrist_com)
         else:
             self.val_dataset = None
         
 
         self.params = trnsfrm_base_params # for later lookups if needed
+
+        ##### setup data to use sample for viewing output during training #####
+        if self.val_dataset is not None and action_out:
+            #
+            old_transform = self.val_dataset.transform # keep a copy
+            self.val_dataset.transform = None # temporariliy disable all transform
+            self.val_dataset.ignore_cache_for_har = True # temporarily get item outside cache
+            item = self.val_dataset[8]
+            self.val_dataset.transform = old_transform
+            self.val_dataset.ignore_cache_for_har = False
+
+            #self.debug_dataset = deepcopy(self.val_dataset)
+            new_transform = deepcopy(self.val_dataset.transform )
+            if isinstance(new_transform, transforms.Compose):
+                    # change ToTuple ExtractType
+                    new_transform.transforms[-1] = ToTuple(extract_type='depth_joints_seq_debug')
+                    for trns in new_transform.transforms:
+                        if isinstance(trns, DepthSeqCropper):
+                            trns.return_debug_data = True
+                            self.mm2px_multi = trns.depth_cropper.mm2px_multi # needed to plot output during training
+                            self.debug_data = new_transform(item)
+                            print('[DATALOADER] FOUND DEPTH_CROPPER + VAL_SET + ACTION_OUT, WILL PRINT SAMPLE OUT DURING TRAIN')
+                            break # break for loop as we expect only one depth_seq_cropper in list
+            self.debug_transforms = new_transform # for later use if needed       
+        else:
+            pass # do not create the attribute 
 
         collate_fn_params = dict(
             pad_sequence=pad_sequence,
@@ -293,6 +318,9 @@ class CombinedDataLoader(BaseDataLoader):
             torch.backends.cudnn.benchmark = False
 
 
+
+
+### HAR DATA LOADER ###
 class JointsActionDataLoader(BaseDataLoader):
     '''
         To load joints and actions of same batch_size but variable sequence length for joints
@@ -304,7 +332,7 @@ class JointsActionDataLoader(BaseDataLoader):
     def __init__(self, data_dir, dataset_type, batch_size, shuffle, 
                 validation_split=0.0, num_workers=1, debug=False, reduce=False, pad_sequence=False,
                 max_pad_length=-1, randomise_params=True, load_depth=False,
-                use_pca = False):
+                use_pca = False, use_wrist_com=False, norm_keypt_dist=False):
         
         trnsfrm_base_params = {
             'num_joints': 21,
@@ -323,14 +351,23 @@ class JointsActionDataLoader(BaseDataLoader):
         #ActionOneHotEncoder(action_classes=45)
         transform_list = [
                             SequenceLimiter(max_length=max_pad_length, **trnsfrm_base_params),
-                            JointSeqReshaper(**trnsfrm_base_params)
+                            JointSeqReshaper(**trnsfrm_base_params),
                         ]
         transform_list += [
                         DepthSeqCropper(**trnsfrm_base_params),
                         DepthSeqStandardiser(**trnsfrm_base_params)
                         ]  if load_depth else []
-        transform_list += [
-                            JointSeqCentererStandardiser(**trnsfrm_base_params),
+        
+        if not norm_keypt_dist:
+            transform_list += [
+                                JointSeqCentererStandardiser(**trnsfrm_base_params),
+                                ToTuple(extract_type='joints_action_seq')
+                            ]
+        else:
+            print("[DATALOADER] WARN: USING BONE_NORM ALSO FORCE WRIST COM")
+            use_wrist_com = True
+            transform_list +=  [
+                            JointSeqBoneNormaliserCenterer(**trnsfrm_base_params),
                             ToTuple(extract_type='joints_action_seq')
                         ]
         
@@ -352,25 +389,20 @@ class JointsActionDataLoader(BaseDataLoader):
                                                             randomise_params=randomise_params)
             trnsfrm_base_params['pca_components'] = pca_components
 
-        trnsfrm = transforms.Compose(transform_list)        
-        # trnsfrm = transforms.Compose([
-        #                                 SequenceLimiter(max_length=max_pad_length),
-        #                                 JointSeqReshaper(),
-        #                                 JointSeqCentererStandardiser(),
-        #                                 ToTuple(extract_type='joints_action_seq')
-        #                             ])
+        trnsfrm = transforms.Compose(transform_list)
+
         self.dataset = HandPoseActionDataset(data_dir, 'train', 'har', transform=trnsfrm, reduce=reduce,
-                                             retrieve_depth=load_depth, preload_depth=False)
+                                             retrieve_depth=load_depth, preload_depth=False, wrist_com=use_wrist_com)
 
         if validation_split > 0.0:
             self.val_dataset = HandPoseActionDataset(data_dir, 'train', 'har',
                                                 transform=trnsfrm, reduce=reduce,
-                                                retrieve_depth=load_depth, preload_depth=False)
+                                                retrieve_depth=load_depth, preload_depth=False, wrist_com=use_wrist_com)
         elif validation_split < 0.0:
             print("[DATALOADER] Setting Val_Set as test dataset")
             self.val_dataset = HandPoseActionDataset(data_dir, 'test', 'har',
                                                 transform=trnsfrm, reduce=reduce,
-                                                retrieve_depth=load_depth, preload_depth=False)
+                                                retrieve_depth=load_depth, preload_depth=False, wrist_com=use_wrist_com)
         else:
             self.val_dataset = None
         
@@ -398,7 +430,7 @@ class JointsActionDataLoader(BaseDataLoader):
 
 
 
-
+### HPE DATA LOADER ###
 class DepthJointsDataLoader(BaseDataLoader):
     '''
         To load joints and corresponding depthmaps for training of HPE/HPG model seperately
@@ -412,10 +444,10 @@ class DepthJointsDataLoader(BaseDataLoader):
 
     def __init__(self, data_dir, dataset_type, batch_size, shuffle, pca_components=30,
                 validation_split=0.0, num_workers=1, debug=False, reduce=False,
-                test_mm_err=False,
+                test_mm_err=False, use_wrist_com=False,
                 use_pca_cache=True, pca_overwrite_cache=False, preload_depth=False,
                 use_msra=False, data_aug=None, pca_data_aug=None,
-                output_type = 'depth_joints', 
+                output_type = 'depth_joints', eval_pca_space=False, train_pca_space=False,
                 use_orig_transformers=False, use_orig_transformers_pca=False,
                 randomise_params=True, crop_depth_ver=0, pca_size=int(2e5),
                 crop_pad_3d=[30., 30., 100.], crop_pad_2d=[40, 40, 100.], cube_side_mm=190):
@@ -441,6 +473,8 @@ class DepthJointsDataLoader(BaseDataLoader):
         else:
             raise NotImplementedError("Output Type %s is undefined for HPE dataloader" % output_type)
 
+        if use_wrist_com:
+            assert (crop_depth_ver == 4 or crop_depth_ver == 5), "All older versions require CoM to be center of image!"
 
         if reduce:
             num_workers = 0
@@ -483,7 +517,7 @@ class DepthJointsDataLoader(BaseDataLoader):
             'dep_params': DepthParameters,
             'aug_lims': Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180),
             'crop_depth_ver': crop_depth_ver,
-            'crop_pad': tuple(crop_pad_3d) if crop_depth_ver <= 1 else tuple(crop_pad_2d), # tuple required for transformers, but yaml loads as list by def
+            'crop_pad': tuple(crop_pad_3d) if (crop_depth_ver <= 1 or crop_depth_ver > 4) else tuple(crop_pad_2d), # tuple required for transformers, but yaml loads as list by def
             'debug_mode': debug,
         }
 
@@ -524,6 +558,13 @@ class DepthJointsDataLoader(BaseDataLoader):
             #print("Deleting depthjointaug for val")
             del val_transform_list[-5]
             #print("New lists:\n", train_transform_list, '\n', val_transform_list)
+        
+        if isinstance(val_transform_list[-2], PCATransformer) and not eval_pca_space:
+            print('[DATALOADER] Removing PCATransformer from val_transforms as eval_pca_space=False => target: (N,63)')
+            del val_transform_list[-2]
+        if isinstance(train_transform_list[-2], PCATransformer) and not train_pca_space:
+            print('[DATALOADER] Removing PCATransformer from train_transforms as train_pca_space=False => target: (N,63)')
+            del train_transform_list[-2]
 
         ### test or train transforms ###
         if dataset_type == 'train':
@@ -541,28 +582,29 @@ class DepthJointsDataLoader(BaseDataLoader):
                                                 ToTuple(extract_type=output_type)
                                             ])
         elif dataset_type == 'test':
-            if test_mm_err:
-                # NOTE: No longer in use...
-                ## output is 21,3 for later pca untransformed of output testing
-                print("Testset target is mm values centered and standardised...")
-                #print("Note: [NEW] Transformer doesn't standardise target!")
-                trnsfrm = transforms.Compose([
-                                JointReshaper(**trnsfrm_base_params),
-                                DepthCropper(**trnsfrm_base_params),
-                                DepthStandardiser(**trnsfrm_base_params),
-                                JointCentererStandardiser(flatten_shape=False, **trnsfrm_base_params), #JointCenterer(**trnsfrm_base_params), #JointCentererStandardiser(flatten_shape=False, **trnsfrm_base_params),
-                                ToTuple(extract_type=output_type)
-                            ])
-            else:
-                print("Testset target is pca output after centering and standardising...")
-                trnsfrm = transforms.Compose([
-                                JointReshaper(**trnsfrm_base_params),
-                                DepthCropper(**trnsfrm_base_params),
-                                DepthStandardiser(**trnsfrm_base_params),
-                                JointCentererStandardiser(flatten_shape=True, **trnsfrm_base_params),
-                                pca_transformer,
-                                ToTuple(extract_type=output_type)
-                            ])
+            raise NotImplementedError
+            # if test_mm_err:
+            #     # NOTE: No longer in use...
+            #     ## output is 21,3 for later pca untransformed of output testing
+            #     print("Testset target is mm values centered and standardised...")
+            #     #print("Note: [NEW] Transformer doesn't standardise target!")
+            #     trnsfrm = transforms.Compose([
+            #                     JointReshaper(**trnsfrm_base_params),
+            #                     DepthCropper(**trnsfrm_base_params),
+            #                     DepthStandardiser(**trnsfrm_base_params),
+            #                     JointCentererStandardiser(flatten_shape=False, **trnsfrm_base_params), #JointCenterer(**trnsfrm_base_params), #JointCentererStandardiser(flatten_shape=False, **trnsfrm_base_params),
+            #                     ToTuple(extract_type=output_type)
+            #                 ])
+            # else:
+            #     print("Testset target is pca output after centering and standardising...")
+            #     trnsfrm = transforms.Compose([
+            #                     JointReshaper(**trnsfrm_base_params),
+            #                     DepthCropper(**trnsfrm_base_params),
+            #                     DepthStandardiser(**trnsfrm_base_params),
+            #                     JointCentererStandardiser(flatten_shape=True, **trnsfrm_base_params),
+            #                     pca_transformer,
+            #                     ToTuple(extract_type=output_type)
+            #                 ])
 
         
         ### pca transforms ###
@@ -610,16 +652,16 @@ class DepthJointsDataLoader(BaseDataLoader):
             
         else:
             self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
-                                                 transform=trnsfrm, reduce=reduce,
+                                                 transform=trnsfrm, reduce=reduce, wrist_com=use_wrist_com,
                                                  retrieve_depth=True, preload_depth=preload_depth)
             if validation_split > 0.0:
                 self.val_dataset = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
-                                                 transform=val_transfrm, reduce=reduce,
+                                                 transform=val_transfrm, reduce=reduce, wrist_com=use_wrist_com,
                                                  retrieve_depth=True, preload_depth=preload_depth)
             elif validation_split < 0.0:
                 print("[DATALOADER] Setting Val_Set as test dataset")
                 self.val_dataset = HandPoseActionDataset(data_dir, 'test', 'hpe',
-                                                 transform=val_transfrm, reduce=reduce,
+                                                 transform=val_transfrm, reduce=reduce, wrist_com=use_wrist_com,
                                                  retrieve_depth=True, preload_depth=preload_depth)
         
         # do this for any dataset...
@@ -659,11 +701,12 @@ class DepthJointsDataLoader(BaseDataLoader):
                     # change ToTuple ExtractType
                     new_transform.transforms[-1] = ToTuple(extract_type='depth_joints_debug')
                     if isinstance(new_transform.transforms[1], DepthCropper):
-                        new_params = deepcopy(trnsfrm_base_params)
-                        del new_params['pca_components']
-                        new_params['crop_depth_ver'] = 1
-                        new_params['crop_pad'] = tuple([30., 30., 200.])
-                        new_transform.transforms[1] = DepthCropper(**new_params)
+                        ### no need to re-init class, original depth cropper should work fine
+                        #new_params = deepcopy(trnsfrm_base_params)
+                        #del new_params['pca_components']
+                        # new_params['crop_depth_ver'] = 1 -- cropping fixed, choose same method used overall
+                        # new_params['crop_pad'] = tuple([30., 30., 200.])
+                        #new_transform.transforms[1] = DepthCropper(**new_params)
                         self.mm2px_multi = new_transform.transforms[1].mm2px_multi # needed to plot output during training
                         self.debug_data = new_transform(item) # only set if all is ok
         else:
@@ -691,6 +734,7 @@ class DepthJointsDataLoader(BaseDataLoader):
             torch.backends.cudnn.benchmark = False
             
 
+### RAM PRE-LOADING WRAPPER CLASS ###
 class PersistentDataLoader(object):
     '''
         A memory heavy function to store all data in the dataset at once into memory
@@ -751,75 +795,3 @@ class PersistentDataLoader(object):
         else:
             return getattr(self.dataloader, name)
 
-
-
-class DeepPriorTestDataLoader(BaseDataLoader):
-    def __init__(self, data_dir, dataset_type, batch_size, shuffle, pca_components=30,
-                validation_split=0.0, num_workers=1, debug=False, reduce=False,
-                test_mm_err=False,
-                use_pca_cache=True, pca_overwrite_cache=False, preload_depth=False,
-                use_msra=True):
-
-        from data_utils._dp_transformers import DeepPriorXYTestTransform, \
-                                                DeepPriorYTestInverseTransform, DeepPriorBatchResultCollector
-        trnsfrm_base_params = {
-            'num_joints': 21,
-            'world_dim': 3,
-            'cube_side_mm': 200,#TODO make this redundant and use DepthParams!
-            'debug_mode': debug,
-            'cam_intrinsics': FHADCameraIntrinsics if not use_msra else MSRACameraIntrinsics,
-            'dep_params': DepthParameters
-        }
-
-        # transform_test = DeepPriorXYTestTransform(depthmap_px=128, crop_len_mm=200,
-        #                                       aug_mode_lst=[AugType.AUG_NONE])
-        transform_test = transforms.Compose([
-                                            JointReshaper(**trnsfrm_base_params),
-                                            DepthCropper(**trnsfrm_base_params),
-                                            DepthStandardiser(**trnsfrm_base_params),
-                                            ToTuple(extract_type='depth_orig_com_orig_joints')
-                                    ])
-
-        if use_msra:
-            print("Using MSRA for testing")
-            data_dir = '../deep-prior-pp-pytorch/datasets/MSRA15'
-            self.dataset = MSRAHandDataset(data_dir, '', 'test', test_subject_id=0,
-                                    transform=transform_test, reduce=reduce,
-                                    use_refined_com=False)
-        else:
-            
-            self.dataset = HandPoseActionDataset(data_dir, dataset_type, 'hpe',
-                                                transform=transform_test, reduce=reduce, 
-                                                retrieve_depth=True, preload_depth=preload_depth)
-
-
-        
-        #quit()
-
-        ### we assume here unpca is already performed
-        ### transform_output: std_centered -> mm_uncentered
-        ## TODO: make compatible with FHAD; parametrize crop len mm
-        self.transform_output = DeepPriorYTestInverseTransform(crop_len_mm=200)
-        self.test_res_collector = DeepPriorBatchResultCollector(self.dataset, self.transform_output, len(self.dataset))
-
-        pca_transformer = PCATransformer(n_components=pca_components,
-                                         use_cache=use_pca_cache,
-                                         overwrite_cache=pca_overwrite_cache)
-
-        pca_trnsfrms = transforms.Compose([
-                                            JointReshaper(**trnsfrm_base_params),
-                                            DepthCropper(**trnsfrm_base_params),
-                                            #### disable augmentation
-                                            # DepthAndJointsAugmenter( # TODO: implem
-                                            #     aug_mode_lst=pca_aug_mode_lst,
-                                            #     **transform_base_params),
-                                            JointCentererStandardiser(**trnsfrm_base_params),
-                                            ToTuple(extract_type='joints') # TODO: see if correct
-                                        ])
-        
-
-        self.pca_weights_np, self.pca_bias_np = _check_pca(data_dir, pca_transformer, pca_trnsfrms,
-                                                           trnsfrm_base_params, use_msra=use_msra)
-
-        super(DeepPriorTestDataLoader, self).\
-            __init__(self.dataset, batch_size, shuffle, validation_split, num_workers)

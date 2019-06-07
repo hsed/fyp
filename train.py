@@ -49,16 +49,29 @@ def main(config, resume):
     
     # get function handles of loss and metrics
     print("\n=> Building loss and optimizer modules...")
-    loss = getattr(module_loss, config['loss'])
+    if isinstance(config['loss'], str):
+        # do the normal thing, legacy
+        loss = getattr(module_loss, config['loss'])
+    else:
+        # assume loss is of dict type with same format as other classes
+        # the loss instance should have __call__ implemented
+        loss = get_instance(module_loss, 'loss', config)
     metrics = [getattr(module_metric, met) for met in config['metrics']]
 
-    print("METRICS: ", metrics)
+    print("LOSS & METRICS: ", loss, metrics)
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
     optimizer = get_instance(torch.optim, 'optimizer', config, trainable_params) \
-                                        if not config['trainer'].get('only_save', False) else torch.optim.Adam([torch.tensor([1,2,3])])
-    #lr_scheduler = get_instance(torch.optim.lr_scheduler, 'lr_scheduler', config, optimizer) TODO: Enable later..
+                                        if (not config['trainer'].get('only_save', False) \
+                                            and not config['trainer'].get('no_train', False)) \
+                                        else torch.optim.Adam([torch.tensor([1,2,3])])
+    
+    if 'lr_scheduler' in config and config['lr_scheduler'] is not None:
+        print('[TRAIN] Will be using LR Scheduler')
+        lr_scheduler = get_instance(torch.optim.lr_scheduler, 'lr_scheduler', config, optimizer) #TODO: Enable later..
+    else:
+        lr_scheduler = None
 
     print("\n=> Building trainer...")
     trainer = Trainer(model, loss, metrics, optimizer, 
@@ -66,7 +79,7 @@ def main(config, resume):
                       config=config,
                       data_loader=data_loader,
                       valid_data_loader=valid_data_loader,
-                      lr_scheduler=None,#lr_scheduler,
+                      lr_scheduler=lr_scheduler,#lr_scheduler,
                       train_logger=train_logger,
                       )
 
@@ -83,10 +96,18 @@ if __name__ == '__main__':
                            help='indices of GPUs to enable (default: all)')
     parser.add_argument('-fp', '--force-pca', default=None, action='store_true',
                            help='Force re-calc of PCA cache')
-    parser.add_argument('-da', '--data-aug', default=None, nargs='+', type=int,
-                        help='[0,1,2,3]')
-    parser.add_argument('-pda', '--pca-data-aug', default=None, nargs='+', type=int,
-                        help='[0,1,2,3]')
+    # parser.add_argument('-da', '--data-aug', default=None, nargs='+', type=int,
+    #                     help='[0,1,2,3]')
+    # parser.add_argument('-pda', '--pca-data-aug', default=None, nargs='+', type=int,
+    #                     help='[0,1,2,3]')
+    parser.add_argument('-bs', '--batch_size', default=None, type=int,
+                        help='overwrite batch_size used in config')
+    parser.add_argument('-vs', '--val-split', default=None, type=float,
+                        help='-1.0 < split < 0.0 ')
+    parser.add_argument('-lr', '--learn-rate', default=None, type=float,
+                        help='LR')
+    parser.add_argument('-ep', '--epochs', default=None, type=int,
+                        help='num epochs')
     parser.add_argument('-nl', '--no-log', action='store_true',
                         help='turn off data logging and monitoring')
     args = parser.parse_args()
@@ -109,10 +130,21 @@ if __name__ == '__main__':
     if args.force_pca is not None:
         config['data_loader']['args']['pca_overwrite_cache'] = args.force_pca
     
-    if args.data_aug is not None:
-        config['data_loader']['args']['data_aug'] = args.data_aug
-    if args.pca_data_aug is not None:
-        config['data_loader']['args']['pca_data_aug'] = args.pca_data_aug
+    # if args.data_aug is not None:
+    #     config['data_loader']['args']['data_aug'] = args.data_aug
+    # if args.pca_data_aug is not None:
+    #     config['data_loader']['args']['pca_data_aug'] = args.pca_data_aug
+    if args.val_split is not None:
+        print('OVERWRITING VAL_SPLIT TO %d' % args.val_split)
+        config['data_loader']['args']['validation_split'] = args.val_split
+    if args.learn_rate is not None:
+        print('OVERWRITING LEARN_RATE TO %d' % args.learn_rate)
+        config['optimizer']['args']['lr'] = args.learn_rate
+    if args.batch_size:
+        print('OVERWRITING BATCH_SIZE TO %d' % args.batch_size)
+        config['data_loader']['args']['batch_size'] = args.batch_size
+    if args.epochs is not None:
+        config['trainer']['epochs'] = args.epochs
 
     if args.no_log:
         print("[MAIN] Logging + saving disabled due to cmd flag!")

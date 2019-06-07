@@ -45,7 +45,7 @@ class Num2Str(object):
 
 class HandPoseActionDataset(Dataset):
     def __init__(self, root, data_mode, task_mode, transform=None, reduce=False,
-                retrieve_depth=True, preload_depth=False):
+                retrieve_depth=True, preload_depth=False, wrist_com=False):
         '''
             `data_mode` => 'train' // 'test'
             `reduce` => Train only on 1 gesture and 2 subjects, CoM won't work correctly
@@ -54,6 +54,7 @@ class HandPoseActionDataset(Dataset):
             `preload_depth` => Directly load all depth maps from cache file to RAM for faster training
                                requires sufficient RAM, no effect when `retrieve_depth` is False
             
+            `wrist_com` => True: Use Wrist 3D Coord as CoM; False: Use MCP Joint
             Currently this class is used to load data to train a HAR
             Another class
         '''
@@ -66,6 +67,8 @@ class HandPoseActionDataset(Dataset):
         
         self.joint_num = 21
         self.world_dim = 3
+
+        self.wrist_com = wrist_com
         
         # self.reorder_idx = np.array([
         #     0, 1, 6, 7, 8, 2, 9, 10, 11, 3, 12,
@@ -117,6 +120,7 @@ class HandPoseActionDataset(Dataset):
         self.RAND_SEED = 0 
 
         self.ignore_cache_for_hpe = False # 
+        self.ignore_cache_for_har = False
         self._load()
 
         self.retrieve_depth = retrieve_depth
@@ -144,7 +148,7 @@ class HandPoseActionDataset(Dataset):
 
         ## need to do this here cause of bug
         if self.depthmap_cachefile is None and self.retrieve_depth is True \
-           and self.preload_depth is False and self.ignore_cache_for_hpe is False:
+           and self.preload_depth is False and self.ignore_cache_for_hpe is False and self.ignore_cache_for_har is False:
             self.depthmap_cachefile = h5py.File(self.depthmap_cachepath, 'r', libver='latest', swmr=True)
 
         if self.task_mode == TaskMode.HAR:
@@ -158,6 +162,11 @@ class HandPoseActionDataset(Dataset):
                 DT.JOINTS_SEQ: self.joints_world[index], # 3d joints => R^{NUM_FRAMES x 63}
                 DT.COM_SEQ: self.coms_world[index], # => R^{NUM_FRAMES x 3}
                 DT.DEPTH_SEQ: None if self.retrieve_depth is False \
+                              else np.stack(
+                                                [np.asarray(Image.open(img_path), dtype=np.uint16) for \
+                                                    img_path in self.names[index]]
+                                            ) \
+                              if self.ignore_cache_for_har \
                               else self.depthmap_cachefile[self.num2str(index)].value \
                               if self.preload_depth is False \
                               else self.depthmaps[index], #depthmaps => R^{NUM_FRAMES x 480 x 640}
@@ -252,10 +261,17 @@ class HandPoseActionDataset(Dataset):
                     ).astype(np.float32)
                 )
 
-                # get gt middle_mcp world co-ords x,y,z of current sample (last item appended)
-                self.coms_world.append(
-                    self.joints_world[-1][:, 3*self.world_dim : 3*self.world_dim+3]
-                )
+                if not self.wrist_com:
+                    # get gt middle_mcp world co-ords x,y,z of current sample (last item appended)
+                    # default option // old option
+                    self.coms_world.append(
+                        self.joints_world[-1][:, 3*self.world_dim : 3*self.world_dim+3]
+                    )
+                else:
+                    # use wrist as CoM
+                    self.coms_world.append(
+                        self.joints_world[-1][:, 0 : 3] ## now this is wrist point only for testing
+                    )
 
                 self.actions.append(
                     int(action_idx_str)
@@ -279,9 +295,14 @@ class HandPoseActionDataset(Dataset):
                 self.joints_world += new_joints_lst
                 
                 # sample is 1D np.array, we extract mcp xyz from last added samples
-                self.coms_world += \
-                    [sample[3*self.world_dim : 3*self.world_dim+3] for \
-                         sample in new_joints_lst]
+                if not self.wrist_com:
+                    self.coms_world += \
+                        [sample[3*self.world_dim : 3*self.world_dim+3] for \
+                             sample in new_joints_lst]
+                else:
+                    self.coms_world += \
+                        [sample[0 : 3] for \
+                            sample in new_joints_lst] # now wrist
 
                 
                 # all samples in seq must have the same action label

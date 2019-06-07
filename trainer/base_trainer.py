@@ -4,6 +4,7 @@ import yaml
 import logging
 import datetime
 import torch
+import shutil
 from utils.util import ensure_dir
 from utils.visualization import WriterTensorboardX
 
@@ -16,13 +17,12 @@ class BaseTrainer:
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        ## this is extended later
+        ## this is extended in child class
         self.lr_scheduler=None
         self.do_validation=None
 
         # setup GPU device if available, move model into configured device
         self.dtype = getattr(torch, config['dtype'])
-        self.target_dtype = getattr(torch, config['target_dtype'])
         self.device, device_ids = self._prepare_device(config['n_gpu'])
         self.model = model.to(self.device, self.dtype)
         if len(device_ids) > 1:
@@ -39,6 +39,7 @@ class BaseTrainer:
         self.verbosity = cfg_trainer['verbosity']
         self.monitor = cfg_trainer.get('monitor', 'off')
         self.only_save = cfg_trainer.get('only_save', False)
+        self.no_train = cfg_trainer.get('no_train', False)
 
         # configuration to monitor model performance and save best
         if self.monitor == 'off':
@@ -81,13 +82,6 @@ class BaseTrainer:
 
         if resume:
             self._resume_checkpoint(resume)
-        elif self.only_save:
-            # mutually exclusive to resume
-            print('[TRAINER] Performing pre-save of model and exiting...')
-            ensure_dir(self.checkpoint_dir) # call this to ensure directories are created accordingly
-            self._save_config()
-            self._save_checkpoint(1, save_best=True)
-            quit()
 
         
         ### add useful info to writer
@@ -117,8 +111,12 @@ class BaseTrainer:
         not_improved_count = 0
 
         for epoch in range(self.start_epoch, self.epochs + 1):
-            result = self._train_epoch(epoch)
+            if not self.no_train:
+                result = self._train_epoch(epoch)
+            else:
+                result = {}
 
+            #print("DO_VAL", self.do_validation)
             ## now do val only works if this method is called from extended class
             if self.do_validation:
                 val_log = self._valid_epoch(epoch)
@@ -131,9 +129,11 @@ class BaseTrainer:
                 ### HARD CODED ID
                 #sample_id = 111
                 #print("WRITING NEW PIC>>")
+                #this function is here to plot results output every end of epoch
                 self._predict_and_write_2D(self.data_loader.debug_data, epoch, self.data_loader.mm2px_multi)
 
             if self.lr_scheduler is not None:
+                print("[TRAININER] LR Scheduler Step...")
                 self.lr_scheduler.step()
             
             # save logged informations into log dict
@@ -150,7 +150,7 @@ class BaseTrainer:
             if self.train_logger is not None:
                 self.train_logger.add_entry(log)
                 if self.verbosity >= 1:
-                    log_str = ''.join(['{:4s}: {:.2f} | '.format(str(key).capitalize(), value) for key,value in  log.items()])
+                    log_str = ''.join(['{:4s}: {:.3f} | '.format(str(key).capitalize()[:10], value) for key,value in  log.items()])
                     self.logger.info(log_str)
 
             # evaluate model performance according to configured metric, save best checkpoint as model_best
@@ -180,10 +180,11 @@ class BaseTrainer:
             if best:
                 # if best only save as '*best*.pth'
                 self._save_checkpoint(epoch, save_best=True)
-            if epoch % self.save_period == 0:
+            if epoch % self.save_period == 0 and not self.no_train:
                 # additionally if at checkpoint, also save regularly
                 self._save_checkpoint(epoch, save_best=False)
         
+        self.writer.close()
         self.logger.info("Experiment %s completed successfully." % self.start_time)
 
     def _train_epoch(self, epoch):
@@ -223,8 +224,12 @@ class BaseTrainer:
         filename = os.path.join(self.checkpoint_dir, 'checkpoint-epoch{}.pth'.format(epoch))
         if save_best:
             best_path = os.path.join(self.checkpoint_dir, 'model_best.pth')
+            if os.path.isfile(best_path):
+                # a file of model_best exists create a backup
+                self.logger.info("Copying previous best: {} ...".format(best_path[:-3] + 'prev.pth'))
+                shutil.copyfile(best_path,best_path[:-3] + 'prev.pth')
             torch.save(state, best_path)
-            self.logger.info("Saving current best: {} ...".format('model_best.pth'))
+            self.logger.info("Saving current best: {} ...".format(best_path))
         else:
             torch.save(state, filename)
             self.logger.info("Saving checkpoint: {} ...".format(filename))
@@ -235,9 +240,9 @@ class BaseTrainer:
 
         :param resume_path: Checkpoint path to be resumed
         """
-        self.logger.info("Loading checkpoint: {} ...".format(resume_path))
+        self.logger.info("[TRAINER] Loading checkpoint: {} ...".format(resume_path))
         checkpoint = torch.load(resume_path)
-        self.start_epoch = checkpoint['epoch'] + 1
+        self.start_epoch = checkpoint['epoch'] + 1 if not self.no_train else 0
         self.mnt_best = checkpoint['monitor_best']
 
         # load architecture params from checkpoint.
@@ -250,6 +255,8 @@ class BaseTrainer:
         if checkpoint['config']['optimizer']['type'] != self.config['optimizer']['type']:
             self.logger.warning('Warning: Optimizer type given in config file is different from that of checkpoint. ' + \
                                 'Optimizer parameters not being resumed.')
+        if self.no_train:
+            self.logger.warning('Warning: Optimizer will not load from save file in no train mode.')
         else:
             self.optimizer.load_state_dict(checkpoint['optimizer'])
     
