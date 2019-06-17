@@ -7,7 +7,7 @@ arch:
     in_frame_dim: 63 #30 # 63 # use 30 if using pca!
     num_hidden_layers: 1
     use_unrolled_lstm: true #false #false #false #true #false #true #false #true # new # true: about 14x slower
-    attention_type: v5 # v6 # v5 #disabled #v4 #v3 #disabled #cnn_v1_k9 #cnn_v2_k9 #cnn_v1_k7 #cnn_v1_k9 #cnn_v1_k9 # cnn_v1_k5 # cnn_v1_k3 # cnn_v1 # disabled
+    attention_type: v8 #v5 #v7 #v5 # v6 # v5 <-- best #disabled #v4 #v3 #disabled #cnn_v1_k9 #cnn_v2_k9 #cnn_v1_k7 #cnn_v1_k9 #cnn_v1_k9 # cnn_v1_k5 # cnn_v1_k3 # cnn_v1 # disabled
 data_loader:
   type: JointsActionDataLoader
   args:

@@ -1,0 +1,25 @@
+# all paths are relative to root folder!
+# $> python results\plot_learn_curve.py -c results\data.yaml
+
+model_name: HPE 
+title: "HPE Equiprob Action Conditioning Experiments"
+scalar_tag: avg_3d_err_mm 
+axis_title: "Avg 3D Error" # this will be Prepended with Train/Valid
+max_epochs: 30
+runs:
+  - "0608_1829" # resent
+  - "0608_2102" # lin
+  - "0609_0002" # lin+res
+  - "0608_1649" # lin++
+  - "0608_1924" # lin++ + res
+run_tags:
+  - "ResNet"
+  - "Linear"
+  - "Lin+Res" # v6 with embedding
+  - "Lin2" # Use linear++
+  - "Lin2+Res" # Res+Lin
+
+legend_loc: 2
+base_path: results\hpe_equiprob_cond_exp\logs
+save_path: results/plot_pdfs/hpe_equiprob_cond_learn_curves.pdf
+x_ticks: 7 # good number for 30 epochs

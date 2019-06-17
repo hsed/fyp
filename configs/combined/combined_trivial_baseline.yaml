@@ -18,7 +18,7 @@
 # Avg3DError model
 
 # HPE
-# 0525_0129 no cond 100 ep
+# 0525_0129 no cond 100 ep /// REPLACED WITH 0608_0803 FOR DATA LOADING BUG FIX
 # 0528_0756 equiprob cond 100 ep
 # 0529_0026 new best action cond 100 ep (linear++ layers)
 
@@ -27,18 +27,20 @@
 # 0531_0551 (or 0528_1657) -- new best ~ 0.4234 // 0.7234/0.8608 check again seq 120    better top3 acc -- causes better combined baseline 
 # 0531_0558 -- very slightly better @ 0.411 (0.414 for seq 120) // 0.7443/0.8556 seq of 300
 
+#0608_1050 new 100ep equiprob trained bug fixed
+
 name: BaselineCombined # for use with tensorboard
 n_gpu: 1
 dtype: float
 arch:
   type: CombinedModel
   args:
-    hpe_checkpoint: 'saved/BaselineHPE/0525_0129/model_best.pth' # 0129 is much better!!! #2046 'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
+    hpe_checkpoint: 'saved/BaselineHPE/0608_1050/model_best.pth' # 0129 is much better!!! #2046 'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
     har_checkpoint: 'saved/BaselineLSTM/0531_0551/model_best.pth' #bad 1618;  #1026: best 'saved/BaselineLSTM/0521_1300/model_best.pth' #1346 # this is the manual loop (unrolled) version; for rolled/compact version use 1346 (padding better) or 1300 (no padding)
     pca_checkpoint:
     hpe_args:
       input_channels: 1
-      action_cond_ver: 0 # use 0 or 6 => no action cond, 6 => best action cond using film 
+      action_cond_ver: 7 #0 # use 0 or 6 => no action cond, 6 => best action cond using film 
       dynamic_cond: false # true -> turn off after X epochs
       pca_components: 30
       dropout_prob: 0.3
@@ -98,6 +100,10 @@ trainer:
   #monitor: max val_top1_acc
   early_stop: 20 # 30 -- use this when val split == -1.0 #
   tensorboardX: true
-  only_save: false #true #false # true, only do this for when saving the trivial baseline and quit() must quit cause optimiser is at weird state
+  only_save: true #false #true #false # true, only do this for when saving the trivial baseline and quit() must quit cause optimiser is at weird state
   no_train: true
   log_dir: logs
+
+
+## the trival score without bug fix was about 44% on no train trivial combination
+## now after bug fix it is 59% and 14.43mm

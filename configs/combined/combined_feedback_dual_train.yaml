@@ -18,14 +18,15 @@
 # Avg3DError model
 
 # HPE
-# 0525_0129 no cond 100 ep
-# 0528_0756 equiprob cond 100 ep
-# 0529_0026 new best action cond 100 ep (linear++ layers)
+# 0525_0129 no cond 100 ep  /// 0608_0803
+# 0528_0756 equiprob cond 100 ep /// 0608_1050
+# 0529_0026 new best action cond 100 ep (linear++ layers) /// 0608_1200
 
 # HAR
 # 0525_1627 -- older best
 # 0531_0551 (or 0528_1657) -- new best ~ 0.4234 // 0.7234/0.8608 check again seq 120    better top3 acc -- causes better combined baseline 
 # 0531_0558 -- very slightly better @ 0.411 (0.414 for seq 120) // 0.7443/0.8556 seq of 300
+# 0609_0145
 
 name: BaselineCombined # for use with tensorboard
 n_gpu: 1
@@ -33,12 +34,12 @@ dtype: float
 arch:
   type: CombinedModel
   args:
-    hpe_checkpoint: 'saved/BaselineHPE/0528_0756/model_best.pth' # 0129 is much better!!! #2046 'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
+    hpe_checkpoint: 'saved/BaselineHPE/0609_0145/model_best.pth' #0527_1929 ## 0129 is much better!!! #2046 'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
     har_checkpoint: 'saved/BaselineLSTM/0531_0551/model_best.pth' #0531_1625 0531_0551 saved/BaselineLSTM/0531_1623/model_best.pth #bad 1618;  #1026: best 'saved/BaselineLSTM/0521_1300/model_best.pth' #1346 # this is the manual loop (unrolled) version; for rolled/compact version use 1346 (padding better) or 1300 (no padding)
     pca_checkpoint:
     hpe_args:
       input_channels: 1
-      action_cond_ver: 0 # use 0 or 6 => no action cond, 6 => best action cond using film 
+      action_cond_ver: 7.181 #7.15 #7.15 #7.15 #7.13 #6 #0 # use 0 or 6 => no action cond, 6 => best action cond using film 
       dynamic_cond: false # true -> turn off after X epochs
       pca_components: 30
       dropout_prob: 0.3
@@ -49,15 +50,17 @@ arch:
       eval_pca_space: false
       train_pca_space: false
       fixed_pca: true # pca weights are untrainable
+      action_equiprob_chance: 0.95 # 0.95 good interesting number #0.99
     har_args:
       in_frame_dim: 64 #30 # 63 # use 30 if using pca!
       num_hidden_layers: 1
       use_unrolled_lstm: false #false #true # true # true: about 14x slower
     forward_type: 0 #0 #3 # 0: Combined (? -> (KeyPts, Action)); 1: HPE ((Depth,[Action]) -> KeyPts); 2: HAR (Depth -> Action); 3: HAR (KeyPts -> Action)
-    combined_version: '8d4' #'4d' # '3d' #'2d' #'2b' #'2e' #'2d' # '2c'  #'2b' #'2a' # used with forward_type == 0
+    combined_version: '4d' #'8d4' #'4d' # '3d' #'2d' #'2b' #'2e' #'2d' # '2c'  #'2b' #'2a' # used with forward_type == 0
     ensure_batchnorm_fixed_eval: true
     ensure_dropout_fixed_eval: true #false # true is better! see exp 0603_1822
-    temporal_smoothing: 0.4
+    # temporal_smoothing: 0.4
+    # trainable_smoothing: True #False #True
 data_loader:
   type: CombinedDataLoader
   args:
@@ -65,7 +68,7 @@ data_loader:
     dataset_type: train
     batch_size: 4 #8 #16 #4 #8 #16
     shuffle: true
-    validation_split: -0.2 # -1.0 -- use this for full test set training # need to change this to -1.0 to test properly in future!
+    validation_split: -1.0 #-0.2 # -1.0 -- use this for full test set training # need to change this to -1.0 to test properly in future!
     num_workers: 8
     pad_sequence: false # set to false to make it easier for loss to be applied element-wise
     max_pad_length: 120 #150 #-1 #100 #-1 #100
@@ -92,11 +95,11 @@ metrics:
 - mse_only_seq
 - nll_only_seq
 - combined_only_seq
-lr_scheduler: ### new for v4d cause it stagnates at ep 15
-  type: StepLR
-  args:
-    step_size: 12 #50
-    gamma: 0.1
+# lr_scheduler: ### new for v4d cause it stagnates at ep 15
+#   type: StepLR
+#   args:
+#     step_size: 12 #50
+#     gamma: 0.1
 trainer:
   epochs: 30 # 100 -- use this when val split == -1.0
   save_dir: saved/
@@ -107,5 +110,5 @@ trainer:
   early_stop: 10 # 30 -- use this when val split == -1.0 #
   tensorboardX: true
   only_save: false #true #false # true, only do this for when saving the trivial baseline and quit() must quit cause optimiser is at weird state
-  no_train: true #false #false
+  no_train: false #true #false #true #false #false
   log_dir: logs

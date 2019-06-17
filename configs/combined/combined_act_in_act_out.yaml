@@ -27,19 +27,27 @@
 # 0525_1627 -- older best
 # 0531_0558 -- very slightly better @ 0.466 // 0.7443 but more seq of 120
 
+### for action %equiprob testing use 30 epoch models except HAR model!!
+### 0608_1145 -- no cond 30ep
+### 0608_0047/model_best.ep30.pth -- equiprob 30 epoch
+
+### 0608_1200
+### 0609_0145
+
 name: BaselineCombined # for use with tensorboard
 n_gpu: 1
 dtype: float
 arch:
   type: CombinedModel
   args:
-    hpe_checkpoint: 'saved/BaselineHPE/0525_0129/model_best.pth' #0527_1756  0527_1455 0525_0129 #'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
-    hpe_act_checkpoint: 'saved/BaselineHPE/0528_0756/model_best.pth' #0528_0756 0527_1508#0515_1848/model_best_fixed.pth
+    hpe_checkpoint: 'saved/BaselineHPE/0608_0803/model_best.pth' #0527_1455/model_best.pth' #0525_0129 0527_1756  0527_1455 0525_0129 #'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
+    hpe_act_checkpoint: 'saved/BaselineHPE/0609_0145/model_best.pth' #0608_1050 0527_1508/model_best.pth #0528_0756 0527_1508#0515_1848/model_best_fixed.pth
     har_checkpoint: 'saved/BaselineLSTM/0531_0551/model_best.pth' #saved/BaselineLSTM/0528_1657/model_best.pth #0525_1627 #0525_1026 'saved/BaselineLSTM/0521_1300/model_best.pth' #1346 # this is the manual loop (unrolled) version; for rolled/compact version use 1346 (padding better) or 1300 (no padding)
     pca_checkpoint:
     hpe_args:
       input_channels: 1
-      action_cond_ver: 6 #0 # use 0 or 6 => no action cond, 6 => best action cond using film 
+      action_cond_ver: 0 #6 #0 # use 0 or 6 => no action cond, 6 => best action cond using film 
+      hpe_act_action_cond_ver: 7.181 #181 #7.15 #6 #7 #6 #0 CHANGE THIS TO TEST FOR ACTION
       dynamic_cond: false # true -> turn off after X epochs
       pca_components: 30
       dropout_prob: 0.3
@@ -50,13 +58,14 @@ arch:
       eval_pca_space: false
       train_pca_space: false
       fixed_pca: true # pca weights are untrainable
+      action_equiprob_chance: 0.95 #1.0 #0.0 #0.35 #0.8 #0.9 #99 999 #5 #1.0 ## experiment on this!!
     har_args:
       in_frame_dim: 64 #30 # 63 # use 30 if using pca!
       num_hidden_layers: 1
       use_unrolled_lstm: false #true #false #true # true # true: about 14x slower
     forward_type: 0 #0 #3 # 0: Combined (? -> (KeyPts, Action)); 1: HPE ((Depth,[Action]) -> KeyPts); 2: HAR (Depth -> Action); 3: HAR (KeyPts -> Action)
-    combined_version: '2a' #'0c' #'0b' # used with forward_type == 0
-    act_0c_alpha: 0.5 #0.8 #0.1 # 0.2 #0.5 #0.5 #0.0 #1.0 #0.5 #0.0001 #0.5 #0.1 #new// temp
+    combined_version: '11d' #'0c' #'0b' # used with forward_type == 0 ;; for GT ACTION USE 0a
+    act_0c_alpha: 1.0 #0.5 #0.8 #0.1 # 0.2 #0.5 #0.5 #0.0 #1.0 #0.5 #0.0001 #0.5 #0.1 #new// temp
 data_loader:
   type: CombinedDataLoader
   args:
@@ -73,7 +82,7 @@ data_loader:
     debug: false
     forward_type: 0 #3 #0 # 3
     use_wrist_com: false # test this and set to true also set crop to ver 4 or 5!!
-    gen_action_seq: true
+    gen_action_seq: false
 optimizer:
   type: Adam
   args:
@@ -87,11 +96,11 @@ metrics:
 - Avg3DError # ONLY USE THIS IF FORWARD TYPE IS 0 FOR EVERYTHING ELSE REMOVE
 - mse_only_seq
 - nll_only_seq
-lr_scheduler:
-  type: StepLR
-  args:
-    step_size: 50
-    gamma: 0.1
+# lr_scheduler:
+#   type: StepLR
+#   args:
+#     step_size: 50
+#     gamma: 0.1
 trainer:
   epochs: 30 # 100 -- use this when val split == -1.0
   save_dir: saved/

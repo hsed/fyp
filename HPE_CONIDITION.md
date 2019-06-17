@@ -45,7 +45,7 @@ This conditioning vector is a weak form of bias/conditioning because the network
 
 
 
-## SOME NEW NOTES ##
+## SOME NEW NOTES NOW IN LATEX ##
 
 First of all why can't we select the best HPEwActCond?
 
@@ -84,7 +84,7 @@ We would expect 10% to be defo bad
 5% maybe on margin
 1% is actually better!!
 
-
+**TABLE IS OUTDATED DO AGAIN WITH FIXED DATA**
 CONFIG: combined_act_in_act_ou.yaml
 HPE: 0527_1455 (VAL_ACC_ON_TEST: 21.97mm) (Best of 30EP Trained)
 HPE_wActCond: 0527_1508 (VAL_ACC_ON_TEST: 21.86mm) (ResNet Cond + Equiprob 100% "7" Stage-1) (Best of 30EP Trained)
@@ -93,6 +93,7 @@ TESTED ON DIRECT VALIDATION WITHOUT ANY TRAINING
 7,7,7.15 ALL USE ONLY RESNET COND
 6->0% Equiprob, 7->100% Equiprob, 7.15->X% Equiprob
 | Action Condition | Proportion of 2nd Pass | Prob of Equiprob | VAL_ACC | VAL_3D |
+| ---- | ---- | ----- | ----- | ----- |
 | 0    | 0%   | N/A   | 38.4% | 21.62mm
 | 7    | 50%  | 100%  | 42%   | 20.82mm
 | 7    | 100% | 100%  | 40.7% | 21.46mm
@@ -113,3 +114,28 @@ From here good candidates are 95% equiprob and 99% equiprob, anything below than
 
 FIX BUG IN OTHER COMBINED METHODS!!!
 NOTE: DEFAULT IS COND 7 ; WITHO THIS EVERYTHING IS SAME AS BEFORE!
+
+
+
+what about dynamic conditioning ... increasing the prob of action conditioning every 2 epochs by 1%?
+
+
+experiment on 5%
+experiment on 10%
+
+experiment using dynamic cond:
+  +1% of act_cond every 2 epochs the model can handle noisy action then show it up more...
+
+
+experiment the best one using attention and then using attention+smoothing...
+
+
+
+
+
+
+**BaselineCombined/0607_1056**
+config: combined_feedback_dual_train.yaml
+action_cond: v7 (pre-training); v15 (fine-tuning); v15 with equiprob = 99%;
+its better than before for most epochs until 22 ep it thne starts to decline it almost touches baseline (no act feedback)
+but is actually worse from 22ep to 30ep compared to baseline_v7 (equiprob = 100%). this shows that 95% might be probably bad we dont know need to experiment!

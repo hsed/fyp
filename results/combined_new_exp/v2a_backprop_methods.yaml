@@ -1,0 +1,28 @@
+# all paths are relative to root folder!
+# $> python results\plot_learn_curve.py -c results\data.yaml
+# need two tags!
+
+model_name: HPE 
+title: "Combined Baseline Back-Propagation Experiments"
+scalar_tag: avg_3d_err_mm
+scalar_tag_2: top1_acc
+axis_title: "Avg 3D Error (mm)" # this will be Prepended with Train/Valid
+axis_title_2: "Top1 Acc (\\%)"
+max_epochs: 15 #20 #30
+runs:
+  - "0615_1124"
+  - "0613_1710"
+  - "0613_1828"
+  - "0615_0939"
+  - "0609_2057"
+run_tags:
+  - "Type 1"
+  - "Type 2"
+  - "Type 3"
+  - "Type 2 \\& 3"
+  - "Type 1, 2 \\& 3"
+legend_loc: 3
+base_path: results/combined_new_exp/logs
+save_path: results/plot_pdfs/combined_v2a_backprob_train.pdf
+x_ticks: 5 # good number for 30 epochs
+fig_size: [10, 8]

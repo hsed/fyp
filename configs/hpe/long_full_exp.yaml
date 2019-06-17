@@ -20,7 +20,7 @@ arch:
   type: DeepPriorPPModel
   args:
     input_channels: 1
-    action_cond_ver: 0 #6 # use 0 or 6 #5 #3 #2 # 0 => no action cond, 1 => simple broadcast+concat (input_channel = 2), #2 -> embed method with broadcast to x channels #3 -> nn.Linear method and onehot with broadcast to x channels 
+    action_cond_ver: 7.17 #0 #6 # use 0 or 6 #5 #3 #2 # 0 => no action cond, 1 => simple broadcast+concat (input_channel = 2), #2 -> embed method with broadcast to x channels #3 -> nn.Linear method and onehot with broadcast to x channels 
     dynamic_cond: false # true -> turn off after X epochs
     pca_components: 30
     dropout_prob: 0.3
@@ -94,6 +94,6 @@ trainer:
   verbosity: 2
   persistent_storage: true # false
   monitor: "min val_avg_3d_err_mm" #"min val_loss" for best weights and early stopping
-  early_stop: 30 #20 #10 #5 #20 #10 #20
+  early_stop: 40 #30 #20 #10 #5 #20 #10 #20
   tensorboardX: true
   log_dir: logs #saved/logs

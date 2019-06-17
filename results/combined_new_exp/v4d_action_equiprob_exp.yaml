@@ -1,0 +1,30 @@
+# all paths are relative to root folder!
+# $> python results\plot_learn_curve.py -c results\data.yaml
+# need two tags!
+
+model_name: HPE 
+title: "Combined Model Action Feedback Equiprobability Experiments"
+scalar_tag: avg_3d_err_mm
+scalar_tag_2: top1_acc
+axis_title: "Avg 3D Error (mm)" # this will be Prepended with Train/Valid
+axis_title_2: "Top1 Acc (\\%)"
+max_epochs: 10
+runs:
+  - "0609_2057"
+  - "0613_1031"
+  - "0613_1239" 
+  - "0613_1445"
+  - "0613_1653" 
+  - "0613_1900" 
+run_tags:
+  - "Baseline"
+  - "$p_{eq}=1.0$"
+  - "$p_{eq}=0.99$"
+  - "$p_{eq}=0.95$"
+  - "$p_{eq}=0.9$"
+  - "$p_{eq}=0.8$"
+legend_loc: 3
+base_path: results/combined_new_exp/logs
+save_path: results/plot_pdfs/combined_v4d_act_feedback_equiprob_exp.pdf
+x_ticks: 5 # good number for 30 epochs
+fig_size: [10, 8]

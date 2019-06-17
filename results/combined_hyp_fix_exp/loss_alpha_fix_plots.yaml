@@ -1,0 +1,26 @@
+# all paths are relative to root folder!
+# $> python results\plot_learn_curve.py -c results\data.yaml
+# need two tags!
+
+model_name: HPE 
+title: "Combined Model Loss $\\alpha$ Adjustments"
+scalar_tag: avg_3d_err_mm
+scalar_tag_2: top1_acc
+axis_title: "Avg 3D Error (mm)" # this will be Prepended with Train/Valid
+axis_title_2: "Top1 Acc (\\%)"
+max_epochs: 15
+runs:
+  - "0610_1458"
+  - "0610_1511" # baseline
+  - "0610_1524" # v1 -- concat type 1
+  - "0610_1537" # v2 -- concat type 2
+run_tags:
+  - "$\\alpha_{\\ell}=0.2$"
+  - "$\\alpha_{\\ell}=0.02$"
+  - "$\\alpha_{\\ell}=\\mathbf{0.002}$" #best
+  - "$\\alpha_{\\ell}=0.0002$"
+legend_loc: 2
+base_path: results/combined_hyp_fix_exp/logs
+save_path: results/plot_pdfs/combined_loss_alpha_fix.pdf
+x_ticks: 7 # good number for 30 epochs
+fig_size: [10, 8]

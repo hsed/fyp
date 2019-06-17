@@ -30,3 +30,5 @@ logs/CSV
 results/plot_data
 results/hpe_cond
 results/hpe_logs
+results/**/logs
+results/**/*.zip
