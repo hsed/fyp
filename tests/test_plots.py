@@ -130,7 +130,7 @@ class DebugData(object):
         self.dtype = dtype
         #logger = logging.getLogger(__name__)
         #writer = WriterTensorboardX("logs/temp_log", logger, True)
-        self.config = yaml.load(open("configs/combined/combined_act_in_act_out.yaml"), Loader=yaml.SafeLoader)
+        self.config = yaml.load(open("configs/combined/student_teach.yaml"), Loader=yaml.SafeLoader)
         self._fix_config()
         
         self.data_loader = CombinedDataLoader(**self.config['data_loader']['args'])

@@ -7,7 +7,7 @@ import yaml
 from tqdm import tqdm
 import argparse
 
-def summary_to_csv(events_file, output_folder, summaries=['scalars']):
+def summary_to_csv(events_file, output_folder, summaries=['scalars'], last_step=-1):
 
     inputLogFile = events_file
     outputFolder = output_folder
@@ -66,18 +66,24 @@ def summary_to_csv(events_file, output_folder, summaries=['scalars']):
             print("\nWarning: skipped file %s due to no scalars present, possibly incomplete run..." % inputLogFile)
             return
 
-        with open(csvFileName,'w') as csvfile:
+        write_mode = 'w' if last_step == -1 else 'a' # append if it is the same experiment
+        with open(csvFileName, write_mode) as csvfile:
             logWriter = csv.writer(csvfile, delimiter=',')
 
             # Write headers to columns
             headers = ['wall_time','step']
             for s in scalarTags:
                 headers.append(s)
-            logWriter.writerow(headers)
-    
+            
+            if last_step == -1:
+                logWriter.writerow(headers)
+
             vals = ea.Scalars(scalarTags[0])
             for i in range(len(vals)):
                 v = vals[i]
+                if v.step < last_step+1:
+                    # print("skipping...", v.step)
+                    continue
                 data = [v.wall_time, v.step]
                 for s in scalarTags:
                     scalarTag = ea.Scalars(s)
@@ -88,6 +94,8 @@ def summary_to_csv(events_file, output_folder, summaries=['scalars']):
                         S = scalarTag[i]
                         data.append(S.value)
                 logWriter.writerow(data)
+                last_step = v.step
+    return last_step
 
 def split_tags(dirname):
     pass
@@ -145,11 +153,12 @@ def create_csv(base_path):
         for dir in dirs:
             pbar.desc = 'Current ' + dir
             events = list(filter(lambda item: item[:6] == 'events', os.listdir(os.path.join(base_path, dir))))
+            last_step = -1
             for event in events:
                 event_dir = os.path.normpath(os.path.join(base_path, dir))
                 event_filename = os.path.normpath(os.path.join(base_path, dir, event))
                 #print('event_filename', event_filename)
-                summary_to_csv(event_filename, event_dir, summaries=['scalars'])
+                last_step = summary_to_csv(event_filename, event_dir, summaries=['scalars'], last_step=last_step)
             pbar.update(1)
 
 

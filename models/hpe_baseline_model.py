@@ -469,7 +469,8 @@ class DeepPriorPPModel(BaseModel): #nn.Module
     def __init__(self, input_channels=1, num_joints=21, num_dims=3, pca_components=30, dropout_prob=0.3,
                  train_mode=True, weight_matx_np=None, bias_matx_np=None, init_w=True, predict_action=False,
                  action_classes=45, action_cond_ver=0, dynamic_cond=False, res_blocks_per_group=5,
-                 eval_pca_space=False, train_pca_space=False, fixed_pca=True, preload_pca=True):
+                 eval_pca_space=False, train_pca_space=False, fixed_pca=True, preload_pca=True,
+                 action_equiprob_chance=1.0):
         self.num_joints, self.num_dims = num_joints, num_dims
         self.predict_action = predict_action
         self.action_cond_ver = action_cond_ver
@@ -506,6 +507,8 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             #self.embed_layer = nn.Embedding(action_classes, 2)
         elif self.action_cond_ver == 4:
             self.film_layer = FiLMBlock(action_classes, 1)
+        elif self.action_cond_ver == 4.1:
+            self.film_layer = FiLMBlock(action_classes, 1, use_embed=False, use_onehot=True)
         elif self.action_cond_ver == 5:
             use_resnet_conditioning = True
             context_params = {'num_unique_contexts': 45, 'use_embed': True, 'use_onehot': False}
@@ -520,7 +523,7 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
             context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
         elif self.action_cond_ver == 7.1:
-            ### use of true conditioning on linear ###
+            ### use of true conditioning on linear // NO CONV###
             #use_resnet_conditioning = True
             use_lin_conditioning = True
             self.use_equiprob_cond = False #True
@@ -543,13 +546,21 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
             context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
                               'accept_tuple_input': True}
+        elif self.action_cond_ver == 7.121:
+            ### use of ALL conditioning on linear++ + conv ###
+            use_resnet_conditioning = True
+            use_lin_conditioning = 2
+            self.use_equiprob_cond = False #True
+            #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
+                              'accept_tuple_input': True}
         elif self.action_cond_ver == 7.13:
             ### use of true conditioning on linear ++  // NO CONV ###
             self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
             use_resnet_conditioning = False
             use_lin_conditioning = True # do not add condition in last layer
             self.use_equiprob_cond = False #True
-            LABEL_FLIP_PROB = 0.95 # 0.4 # 0.8
+            LABEL_FLIP_PROB = action_equiprob_chance #0.95 # 0.4 # 0.8
             self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([LABEL_FLIP_PROB]))
             #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
             context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
@@ -560,7 +571,7 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             use_resnet_conditioning = False
             use_lin_conditioning = 2 # do not add condition in last layer
             self.use_equiprob_cond = False #True
-            LABEL_FLIP_PROB = 0.4
+            LABEL_FLIP_PROB = action_equiprob_chance #0.4
             print("[HPE] ACT_COND_ 7.14 LABEL_FLIP_PROB:", LABEL_FLIP_PROB)
             self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([LABEL_FLIP_PROB]))
             #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
@@ -572,7 +583,8 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             use_resnet_conditioning = True
             use_lin_conditioning = False # do not add condition in last layer
             self.use_equiprob_cond = False #True
-            LABEL_FLIP_PROB = 0.90 # 0.4 # 0.8
+            LABEL_FLIP_PROB = action_equiprob_chance #0.99 #0.95 #0.999 #0.90 # 0.4 # 0.8
+            print('[HPE] USING LABEL_FLIP_PROB:', LABEL_FLIP_PROB)
             self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([LABEL_FLIP_PROB]))
             #self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
             context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True,
@@ -586,7 +598,7 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             use_lin_conditioning = True
             self.use_equiprob_cond = True
             self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
-            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True, 'accept_tuple_input': True}
         elif self.action_cond_ver == 7.17:
             ### use of equiprob conditioning ###
             ## this is like v7 but on linear cond++
@@ -594,7 +606,7 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             use_lin_conditioning = 2
             self.use_equiprob_cond = True
             self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
-            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True, 'accept_tuple_input': True}
         elif self.action_cond_ver == 7.18:
             ### use of equiprob conditioning ###
             ## this is like v7 but on linear+res cond
@@ -602,7 +614,18 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             use_lin_conditioning = True
             self.use_equiprob_cond = True
             self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
-            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True, 'accept_tuple_input': True}
+        elif self.action_cond_ver == 7.181 or self.action_cond_ver == 7.182:
+            ### use of equiprob conditioning with variable chance ###
+            ## this is like v7.15 but on linear+res cond
+            use_resnet_conditioning = True
+            use_lin_conditioning = True
+            self.use_equiprob_cond = False #True
+            LABEL_FLIP_PROB = action_equiprob_chance #0.99 #0.95 #0.999 #0.90 # 0.4 # 0.8
+            print('[HPE] USING LABEL_FLIP_PROB:', LABEL_FLIP_PROB)
+            self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([LABEL_FLIP_PROB]))
+            self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True, 'accept_tuple_input': True}
         elif self.action_cond_ver == 7.19:
             ### use of equiprob conditioning ###
             ## this is like v7 but on linear++ + res cond
@@ -610,7 +633,7 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             use_lin_conditioning = 2
             self.use_equiprob_cond = True
             self.equiprob_act = (1/action_classes) * torch.ones(action_classes)
-            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True}
+            context_params = {'num_unique_contexts': 45, 'use_embed': False, 'use_onehot': True, 'accept_tuple_input': True}
         ### end new ###
         elif self.action_cond_ver == 7.2:
             # this is like act_cond_6 but with also lin cond
@@ -697,66 +720,78 @@ class DeepPriorPPModel(BaseModel): #nn.Module
     def forward(self, x):
         #x = x.float()   # cast to float,temp fix..., later whole shuld be float
         #print('TEST DATA NEW: ', len(x), x[0].shape, x[1].shape)
-
-        if isinstance(x, tuple):
+        if not isinstance(x, tuple):
+            # by default ensure x is a tuple
+            x, a = (x, None)
+        else:
+            # if isinstance(x, tuple):
             ## new depth+action
             ## both these elements are tensors but of different types
             x, a = x # (dpt, action) in tuple
             # quit()
-            
-            if self.action_cond_ver == 0:
-                a = None
-            elif self.action_cond_ver == 1:
-                ## a simple embedding methoddoesn't require long
-                ## if long is needed it should be back converted here,
-                ## long -> float -> long is safe for ints no data lost just a bit ineff
-                # [BATCH_SIZE] -> [BATCH_SIZE, 1, 1, 1] -> [BATCH_SIZE, 1, 128, 128]
-                a = a.unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(x)
-                x = torch.cat((x, a), 1)  # concat on channel axis -> [BATCH_SIZE, 2, 128, 128]
-            elif self.action_cond_ver == 2:
-                # [BATCH_SIZE] -> [BATCH_SIZE, 45] -> [BATCH_SIZE, 45, 1, 1] -> [BATCH_SIZE, 45, 128, 128]
-                a = self.embed_layer(a.long()).unsqueeze(2).unsqueeze(3).expand(-1,-1,x.shape[2], x.shape[3])
-                x = torch.cat((x, a), 1)  # concat on channel axis -> [BATCH_SIZE, 46, 128, 128]
-                #print("A_SHAPE", a.shape)
-            elif self.action_cond_ver == 3:
-                # film in the beginning only.... NOTE THIS IS REPURPOSED NOW NO LONGER FILM!!
-                # THIS NOW ONE HOT COMPATIBLE EMBEDDING
-                # a = self.embed_layer(a.long()).unsqueeze(2).unsqueeze(3).expand(-1,-1,x.shape[2], x.shape[3])
-                # gammas = a[:, 0, :, :].unsqueeze(1)
-                # betas = a[:, 1, :, :].unsqueeze(1)
-                # x = (1+gammas)*x + betas
-                # [BATCH_SIZE] -> [BATCH_SIZE, 45] -> [BATCH_SIZE, 45, 1, 1] -> [BATCH_SIZE, 45, 128, 128]
-                a = self.embed_layer(a).unsqueeze(2).unsqueeze(3).expand(-1,-1,x.shape[2], x.shape[3])
-                x = torch.cat((x, a), 1)  # concat on channel axis -> [BATCH_SIZE, 46, 128, 128]
-            elif self.action_cond_ver == 4:
-                # film in the beginning only.... now done properly....
-                x = self.film_layer(x, a)
-            elif self.action_cond_ver == 5 or self.action_cond_ver == 6:
-                pass # all config set during init
-            elif self.action_cond_ver >= 7 and self.action_cond_ver < 7.2:
-                if self.action_cond_ver == 7.13 or self.action_cond_ver == 7.14 or self.action_cond_ver == 7.15:
-                    ## do some randoming...
-                    
-                    # probabilistic
-                    self.use_equiprob_cond = bool(self.equiprob_chance.sample().item())
-                        
+        # overwrite a object with relevant data based on action type
 
-                
-                # [7.0, 7.2)
-                if self.use_equiprob_cond:
-                    a = self.equiprob_act.unsqueeze(0).expand(x.shape[0], -1).to(x.device, x.dtype)
-                else:
-                    pass # use actual action
-            elif self.action_cond_ver == 7.2:
-                # dynamic equiprob ..?
-                # try torch bernoulli random....
-                pass
-            else:
-                print("Input Len:", len(x), "Input Type:", type(x),
-                      "Depth Shape:", x[0].shape, "Action Shape:", x[1].shape)
-                raise NotImplementedError("Unknown ActionCond Version")
-        else:
+        if self.action_cond_ver == 0:
             a = None
+        elif self.action_cond_ver == 1:
+            ## a simple embedding methoddoesn't require long
+            ## if long is needed it should be back converted here,
+            ## long -> float -> long is safe for ints no data lost just a bit ineff
+            # [BATCH_SIZE] -> [BATCH_SIZE, 1, 1, 1] -> [BATCH_SIZE, 1, 128, 128]
+            a_idx = torch.argmax(a, dim=1).float() #encodings are one hot by default convert io indices
+            a = a_idx.unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(x)
+            x = torch.cat((x, a), 1)  # concat on channel axis -> [BATCH_SIZE, 2, 128, 128]
+        elif self.action_cond_ver == 2:
+            # [BATCH_SIZE] -> [BATCH_SIZE, 45] -> [BATCH_SIZE, 45, 1, 1] -> [BATCH_SIZE, 45, 128, 128]
+            a = self.embed_layer(a.long()).unsqueeze(2).unsqueeze(3).expand(-1,-1,x.shape[2], x.shape[3])
+            x = torch.cat((x, a), 1)  # concat on channel axis -> [BATCH_SIZE, 46, 128, 128]
+            #print("A_SHAPE", a.shape)
+        elif self.action_cond_ver == 3:
+            # film in the beginning only.... NOTE THIS IS REPURPOSED NOW NO LONGER FILM!!
+            # THIS NOW ONE HOT COMPATIBLE EMBEDDING
+            # a = self.embed_layer(a.long()).unsqueeze(2).unsqueeze(3).expand(-1,-1,x.shape[2], x.shape[3])
+            # gammas = a[:, 0, :, :].unsqueeze(1)
+            # betas = a[:, 1, :, :].unsqueeze(1)
+            # x = (1+gammas)*x + betas
+            # [BATCH_SIZE] -> [BATCH_SIZE, 45] -> [BATCH_SIZE, 45, 1, 1] -> [BATCH_SIZE, 45, 128, 128]
+            a = self.embed_layer(a).unsqueeze(2).unsqueeze(3).expand(-1,-1,x.shape[2], x.shape[3])
+            x = torch.cat((x, a), 1)  # concat on channel axis -> [BATCH_SIZE, 46, 128, 128]
+        elif self.action_cond_ver == 4 or self.action_cond_ver == 4.1:
+            # film in the beginning only.... now done properly....
+            x = self.film_layer(x, a)
+        elif self.action_cond_ver == 5 or self.action_cond_ver == 6:
+            pass # all config set during init
+        elif self.action_cond_ver == 7.182:
+            act_samples = []
+            for i in range(x.shape[0]):
+                if bool(self.equiprob_chance.sample().item()):
+                    act_samples.append(self.equiprob_act.to(x.device, x.dtype))
+                else:
+                    act_samples.append(a[i])
+            a = torch.stack(act_samples, dim=0)
+        elif self.action_cond_ver >= 7 and self.action_cond_ver < 7.2:
+            if self.action_cond_ver == 7.13 or self.action_cond_ver == 7.14 or self.action_cond_ver == 7.15 \
+                or self.action_cond_ver == 7.181:
+                ## do some randoming...
+                
+                # probabilistic
+                self.use_equiprob_cond = bool(self.equiprob_chance.sample().item())
+                    
+
+            
+            # [7.0, 7.2)
+            if self.use_equiprob_cond:
+                a = self.equiprob_act.unsqueeze(0).expand(x.shape[0], -1).to(x.device, x.dtype)
+            else:
+                pass # use actual action
+        elif self.action_cond_ver == 7.2:
+            # dynamic equiprob ..?
+            # try torch bernoulli random....
+            pass
+        else:
+            print("Input Len:", len(x), "Input Type:", type(x),
+                    "Depth Shape:", x[0].shape, "Action Shape:", x[1].shape)
+            raise NotImplementedError("Unknown ActionCond Version")
 
         # from henceforth x is always of type tuple
         #if a is None:
@@ -857,11 +892,20 @@ class DeepPriorPPModel(BaseModel): #nn.Module
             print("[HPE_MODEL] Turning off action cond (5 -> 0)!!")
             self.action_cond_ver = 0
         
-        # if epochs_trained >= 15 and self.action_cond_ver == 7.14:
+        # if epochs_trained == 15 and self.action_cond_ver == 7.182:
         #     # note here you should ckech first whats current prob and if it is not 0.01 thenn make it that
         #     # or slowly decay...
-        #     print("[HPE_MODEL] Making equiprob act prob loww 0.01!!")
-        #     self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([0.01]))
+        #     print("[HPE_MODEL] Making equiprob act prob lower 0.80!!")
+        #     self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([0.80]))
+
+        # if epochs_trained % 5 and self.action_cond_ver == 7.15:
+        #     # note here you should ckech first whats current prob and if it is not 0.01 thenn make it that
+        #     # or slowly decay...
+        #     print("[HPE_MODEL] Making equiprob act prob high!")
+        #     print("[HPE_MODEL] Old Prob: %f" % self.equiprob_chance.probs.item(), end='')
+        #     new_prob = self.equiprob_chance.probs.item() - 0.1
+        #     print(" New Prob: %f" % new_prob)
+        #     self.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([new_prob]))
 
     # ## makes a residual layer of n_blocks
     # ## expansion is always 4x of bottleneck

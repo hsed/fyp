@@ -14,14 +14,16 @@ from torch.nn.utils.rnn import pack_sequence, pad_packed_sequence, PackedSequenc
 
 class CombinedModel(BaseModel):
     def __init__(self, hpe_checkpoint=None, har_checkpoint=None, pca_checkpoint=None,
-                 hpe_act_checkpoint = None,
+                 hpe_act_checkpoint = None, har_act_checkpoint=None,
                  hpe_args = None, har_args = None, forward_type=0, combined_version='0',
                  force_trainable_params=False, action_classes=45, act_0c_alpha=0.01,
                  joints_dim=63, max_seq_length=120,
                  ensure_batchnorm_fixed_eval=False,
                  ensure_dropout_fixed_eval=False,
                  ensure_batchnorm_dropout_fixed_eval=False,
-                 temporal_smoothing=-1, trainable_smoothing=False):
+                 temporal_smoothing=-1, trainable_smoothing=False,
+                 ensemble_eta=0.5, ensemble_zeta=0.5,
+                 trainable_enemble_hyp=False):
         
         #???self.train_mode = 'u_v_w'????
         super(CombinedModel, self).__init__()
@@ -50,19 +52,38 @@ class CombinedModel(BaseModel):
                 #     self.register_buffer(param.name, param.data)
         else: 
             # note optimizer states are lost ... we can't really do much there
-            print("[COMBINED_MODEL] LOADING HPE CHECKPOINT: %s" % hpe_checkpoint)
+            print("[COMBINED_MODEL] Loading HPE Checkpoint: %s" % hpe_checkpoint)
+            print("[COMBINED_MODEL] OVERWRITING ACTION_COND with HPE_ARGS config: %s" % hpe_args['action_cond_ver'])
             checkpoint = torch.load(hpe_checkpoint)
+            checkpoint['config']['arch']['args']['action_cond_ver'] = hpe_args['action_cond_ver']
+            if 'action_equiprob_chance' in hpe_args:
+                print("[COMBINED_MODEL] OVERWRITING ACTION_EQUIPROB_CHANCE with HPE_ARGS config: %s" % hpe_args['action_equiprob_chance'])
+                checkpoint['config']['arch']['args']['action_equiprob_chance'] = hpe_args['action_equiprob_chance']
             self.hpe = DeepPriorPPModel(**checkpoint['config']['arch']['args'])
             self.hpe.load_state_dict(checkpoint['state_dict'], strict=False)
         
 
         if hpe_act_checkpoint is not None:
-            print("[COMBINED_MODEL] LOADING HPE ACT CHECKPOINT: %s" % hpe_act_checkpoint)
+            print("[COMBINED_MODEL] Loading HPE ACT Checkpoint: %s" % hpe_act_checkpoint)
+            print("[COMBINED_MODEL] OVERWRITING ACTION_COND with HPE_ACT_ACTION_COND: %s" % hpe_args['hpe_act_action_cond_ver'])
             checkpoint_ = torch.load(hpe_act_checkpoint)
+            checkpoint_['config']['arch']['args']['action_cond_ver'] = hpe_args['hpe_act_action_cond_ver']
+            if 'action_equiprob_chance' in hpe_args:
+                print("[COMBINED_MODEL] OVERWRITING ACTION_EQUIPROB_CHANCE with HPE_ARGS config: %s" % hpe_args['action_equiprob_chance'])
+                checkpoint_['config']['arch']['args']['action_equiprob_chance'] = hpe_args['action_equiprob_chance']
             self.hpe_act = DeepPriorPPModel(**checkpoint_['config']['arch']['args'])
             self.hpe_act.load_state_dict(checkpoint_['state_dict'])
             # for param in self.hpe_act.parameters():
             #     param.requires_grad = False
+        
+        if har_act_checkpoint is not None:
+            print("[COMBINED_MODEL] NEW: LOADING HAR_ACT CHECKPOINT: %s" % har_act_checkpoint)
+            checkpoint__ = torch.load(har_act_checkpoint)
+            # print("******* NEW CONFIG\n", yaml.dump(checkpoint__['config']['arch']['args']))
+            self.har_act = BaselineHARModel(**checkpoint__['config']['arch']['args'])
+            self.har_act.load_state_dict(checkpoint__['state_dict'])
+
+
         # note must ensure dtypes / device is correct at runtime
         # NEED LOG VERSION AS WE USE LOG SOFTMAX AND NLL LOSS!!
         self.act_zeros = torch.zeros(action_classes, device=next(self.parameters()).device)
@@ -102,6 +123,28 @@ class CombinedModel(BaseModel):
             hpe_act_args['action_cond_ver'] = 6
             self.hpe_act = DeepPriorPPModel(**hpe_act_args)
         
+        #### temporary code for debugging only ####
+        if self.combined_version[0:2] == '12' and not getattr(self, "har_act", False):
+            print('[COMBINED_MODEL] SPECIAL DEBUG CODE: CREATING TEMP HAR ACT USING HAR ARGS')
+            self.har_act = BaselineHARModel(**har_args)
+        
+        #### temporary code for debugging only ####
+        if self.combined_version[0:2] == '15' and not getattr(self, "har_act", False):
+            print('[COMBINED_MODEL] SPECIAL DEBUG CODE: CREATING TEMP HAR ACT USING HAR ARGS')
+            self.har_act = BaselineHARModel(**har_args)
+        
+        if self.combined_version[0:2] == '16':
+            if not getattr(self, "har_act", False):
+                print('[COMBINED_MODEL] SPECIAL DEBUG CODE: CREATING TEMP HAR ACT USING HAR ARGS')
+                har_act_args = deepcopy(har_args)
+                har_act_args['attention_type'] = 'v5'
+                self.har_act = BaselineHARModel(**har_act_args)
+            if not getattr(self, "hpe_act", False):
+                print('[COMBINED_MODEL] SPECIAL DEBUG CODE: CREATING TEMP HPE ACT')
+                hpe_act_args = deepcopy(hpe_args)
+                hpe_act_args['action_cond_ver'] = 6
+                self.hpe_act = DeepPriorPPModel(**hpe_act_args)
+        
         #### new attention mechanism ####
         if self.combined_version[0] == '5':
             print('[COMBINED_MODEL] V5X/6X: Adding extra module for attention mechanism')
@@ -124,6 +167,23 @@ class CombinedModel(BaseModel):
                 print('[COMBINED_MODEL] Gamma=%0.2f will be made trainable!' % temporal_smoothing)
                 self.temporal_smoothing_param = torch.nn.Parameter(torch.tensor(temporal_smoothing))
                 temporal_smoothing = self.temporal_smoothing_param
+        
+        if self.combined_version[0:2] == '12' or self.combined_version[0:2] == '13' \
+            or self.combined_version == '11d3':
+            print("[COMBINED_MODEL] act_0c_alpha=%0.4f aka student_teacher_fusion will be made TRAINABLE!" % act_0c_alpha)
+            self.act_0c_alpha = torch.nn.Parameter(torch.tensor(float(act_0c_alpha)))
+        
+        if self.combined_version == '11d5':
+            print('[COMBINED_MODEL] Eta=%0.4f, Zeta=%0.4f' % (ensemble_eta, ensemble_zeta))
+            if trainable_enemble_hyp:
+                print("[COMBINED_MODEL] ensemble eta and zeta trainable!")
+                self.ensemble_eta = torch.nn.Parameter(torch.tensor(float(ensemble_eta)))
+                self.ensemble_zeta = torch.nn.Parameter(torch.tensor(float(ensemble_zeta)))
+            else:
+                self.ensemble_eta = ensemble_eta
+                self.ensemble_zeta = ensemble_zeta
+            ensemble_eta = self.ensemble_eta # useful if made a param
+            ensemble_zeta = self.ensemble_zeta # useful if made a param
 
         self._assert_attribs()
         if not force_trainable_params: self._set_trainable_params() # turn params on or off based on forward type and versions
@@ -138,7 +198,8 @@ class CombinedModel(BaseModel):
             '2b': self.forward_v0,
             '2b2': self.forward_v0,
             '2c': self.forward_v0,
-            '2d': self.forward_v0, # 2nd best
+            '2d': self.forward_v0, # 2nd best ... baseline
+            '2f': self.forward_v0,
             '3a': self.forward_v0_unrolled,
             '3d': self.forward_v0_unrolled, # 2nd best
             '4d': self.forward_v0_unrolled_action_feedback, # best
@@ -153,7 +214,20 @@ class CombinedModel(BaseModel):
             '8d3': partial(self.forward_v0_unrolled_action_feedback_smoothing, gamma=temporal_smoothing, har_smoothing=False),
             '8d4': partial(self.forward_v0_unrolled_action_feedback_smoothing, gamma=temporal_smoothing, har_smoothing=True),
             '10d': partial(self.forward_v0_unrolled_action_feedback_attention_smoothing, gamma=temporal_smoothing, har_smoothing=True),
-            '10d2': partial(self.forward_v0_unrolled_action_feedback_attention_smoothing, gamma=temporal_smoothing, har_smoothing=False)
+            '10d2': partial(self.forward_v0_unrolled_action_feedback_attention_smoothing, gamma=temporal_smoothing, har_smoothing=False),
+            '11d': self.forward_v0_action_feedback_cleaned,
+            '11d2': self.forward_v0_action_feedback_cleaned,
+            '11d3': self.forward_v0_action_feedback_cleaned,
+            '11d4': partial(self.forward_v0_action_feedback_temporal_smoothing, gamma=temporal_smoothing),
+            '11d5': partial(self.forward_v0_action_feedback_eta_zeta, eta=ensemble_eta, zeta=ensemble_zeta),
+            '12d': self.forward_v0_action_feedback_dual_hpe_har,
+            '12d2': self.forward_v0_action_feedback_dual_hpe_har,
+            '13d': self.forward_v0_action_feedback_refined,
+            '14d': self.forward_v0_action_feedback_cleaned,
+            '15d': partial(self.forward_v0_action_feedback_student_teacher, return_y_teacher=False),
+            '15d2': partial(self.forward_v0_action_feedback_student_teacher, return_y_teacher=True),
+            '15d3': partial(self.forward_v0_action_feedback_student_teacher, return_y_teacher=True, return_type=2),
+            '16d': self.forward_v0_action_feedback_dual_temporal_atten,
         }
 
         # set here to ensure init_metric fn can access these values
@@ -194,6 +268,7 @@ class CombinedModel(BaseModel):
                 for param in self.hpe.parameters():
                     param.requires_grad = False
                 if getattr(self, 'hpe_act', False):
+                    print("[COMBINED_MODEL] v0c uses Act0cAlpha: %0.2f" % self.act_0c_alpha)
                     for param in self.hpe_act.parameters():
                         param.requires_grad = False
             
@@ -228,7 +303,7 @@ class CombinedModel(BaseModel):
                 print("[COMBINED_MODEL] V2B2: Setting all HPE layers incl. PCA to be trainable. Rest non-trainable")
                 for param in self.har.parameters():
                     param.requires_grad = False
-                for param in self.hpe.final_layer.parameters():
+                for param in self.hpe.parameters():
                     param.requires_grad = True
                 self.ensure_pca_fixed_weights = False
                 self.hpe.train_pca_space = False
@@ -279,6 +354,14 @@ class CombinedModel(BaseModel):
                 for param in self.har.action_layers.parameters():
                     param.requires_grad = False
             
+            elif self.combined_version == '2f':
+                print("[COMBINED_MODEL] V2F: Setting only HAR trainable")
+                for param in self.hpe.parameters():
+                    param.requires_grad = False
+                self.hpe.train_pca_space = False
+                for param in self.har.parameters():
+                    param.requires_grad = True
+            
             elif self.combined_version == '5f':
                 print("[COMBINED_MODEL] V5F: Setting all HPE layers non-trainable.")
                 for param in self.hpe.parameters():
@@ -287,6 +370,132 @@ class CombinedModel(BaseModel):
                 self.hpe.train_pca_space = False
                 print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
             
+            elif self.combined_version == '11d' or self.combined_version == '13d' \
+                 or self.combined_version == '14d' or self.combined_version == '11d3' \
+                 or self.combined_version == '11d4' or self.combined_version == '11d5':
+                print("[COMBINED_MODEL] V11D/V13D/14D: Setting all layers layers (except hpe1//incl. PCA2) trainable, ensuring HPEAct is wActCond.")
+                print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
+                print("[COMBINED_MODEL] V11/V13/V14 uses Act0cAlpha: %0.2f" % self.act_0c_alpha)
+                for param in self.hpe.parameters():
+                    param.requires_grad = False
+                self.ensure_pca_fixed_weights = False
+                self.hpe.train_pca_space = False
+                self.hpe_act.train_pca_space = False
+
+                for param in self.har.parameters():
+                    param.requires_grad = True
+                for param in self.hpe.parameters():
+                    param.requires_grad = False
+                for param in self.hpe_act.parameters():
+                    param.requires_grad = True
+
+                assert self.hpe_act.action_cond_ver != 0, "Please use ActCond arch for HPEACT!"
+            
+            elif self.combined_version == '11d2':
+                print("[COMBINED_MODEL] V11D2: Setting all layers layers (incl. PCA2) trainable, ensuring HPEAct is wActCond.")
+                print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
+                print("[COMBINED_MODEL] V11 uses Act0cAlpha: %0.2f" % self.act_0c_alpha)
+                ### note this model requires batch size 2 for training as size 4 runs out of mem!
+                self.ensure_pca_fixed_weights = False
+                self.hpe.train_pca_space = False
+                self.hpe_act.train_pca_space = False
+
+                for param in self.har.parameters():
+                    param.requires_grad = True
+                for param in self.hpe.parameters():
+                    param.requires_grad = True
+                for param in self.hpe_act.parameters():
+                    param.requires_grad = True
+
+                assert self.hpe_act.action_cond_ver != 0, "Please use ActCond arch for HPEACT!"
+            
+
+            elif self.combined_version == '12d':
+                print("[COMBINED_MODEL] V12D: Setting all layers layers (except hpe1//har1) trainable, ensuring HPEAct is wActCond.")
+                print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
+                print("[COMBINED_MODEL] V12 uses Act0cAlpha (StudentTeacherFusion): %0.2f" % self.act_0c_alpha)
+                self.ensure_pca_fixed_weights = False
+                
+                for param in self.hpe.parameters():
+                    param.requires_grad = False
+                for param in self.har.parameters():
+                    param.requires_grad = False
+                
+                self.hpe.train_pca_space = False
+                self.hpe_act.train_pca_space = False
+
+                for param in self.har_act.parameters():
+                    param.requires_grad = True
+                for param in self.hpe_act.parameters():
+                    param.requires_grad = True
+
+                assert self.hpe_act.action_cond_ver != 0, "Please use ActCond arch for HPEACT!"
+            
+            elif self.combined_version == '12d2':
+                print("[COMBINED_MODEL] V12D2: Setting hpe2+har1+har2 (except hpe1) trainable, ensuring HPEAct is wActCond.")
+                print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
+                print("[COMBINED_MODEL] V12 uses Act0cAlpha (StudentTeacherFusion): %0.2f" % self.act_0c_alpha)
+                self.ensure_pca_fixed_weights = False
+                
+                for param in self.hpe.parameters():
+                    param.requires_grad = False
+                for param in self.har.parameters():
+                    param.requires_grad = True
+                
+                self.hpe.train_pca_space = False
+                self.hpe_act.train_pca_space = False
+
+                for param in self.har_act.parameters():
+                    param.requires_grad = True
+                for param in self.hpe_act.parameters():
+                    param.requires_grad = True
+
+                assert self.hpe_act.action_cond_ver != 0, "Please use ActCond arch for HPEACT!"
+            
+            elif self.combined_version[:3] == '15d':
+                print("[COMBINED_MODEL] V15D: Setting all layers layers (except hpe_act//har_act) trainable, HPEAct is wActCond.")
+                print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
+                self.ensure_pca_fixed_weights = False
+
+                for param in self.hpe_act.parameters():
+                    param.requires_grad = False
+                for param in self.har_act.parameters():
+                    param.requires_grad = False
+                
+                for param in self.hpe.parameters():
+                    param.requires_grad = True
+                for param in self.har.parameters():
+                    param.requires_grad = True
+                
+                self.hpe.train_pca_space = False
+                self.hpe_act.train_pca_space = False
+
+                assert self.hpe_act.action_cond_ver != 0, "Please use ActCond arch for HPEACT!"
+            
+            elif self.combined_version[:3] == '16d':
+                print("[COMBINED_MODEL] V16D: Setting HPE_ACT, HAR, HAR_ACT_ATTEN trainable, HPEAct is wActCond.")
+                print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
+                self.ensure_pca_fixed_weights = False
+
+                for param in self.hpe_act.parameters():
+                    param.requires_grad = True
+                for param in self.har_act.parameters():
+                    param.requires_grad = False
+                for param in self.har_act.attention_layer.parameters():
+                    # make only attention trainable
+                    param.requires_grad = True
+                
+                for param in self.hpe.parameters():
+                    param.requires_grad = False
+                for param in self.har.parameters():
+                    param.requires_grad = True
+                
+                self.hpe.train_pca_space = False
+                self.hpe_act.train_pca_space = False
+
+                assert self.hpe_act.action_cond_ver != 0, "Please use ActCond arch for HPEACT!"
+
+
             else:
                 raise NotImplementedError("[COMBINED_MODEL] No init scheme found for %s" % self.combined_version)
 
@@ -506,7 +715,7 @@ class CombinedModel(BaseModel):
             h_i, (h_n, c_n) = self.har.recurrent_layers(y_i.unsqueeze(1), (h_n, c_n))
             h.append(h_i.squeeze(1))
 
-            z_n = torch.exp(h_i.squeeze(1)) # these are log_probs, need to make them probs!
+            z_n = torch.exp(self.har.action_layers(h_i.squeeze(1))) #torch.exp(h_i.squeeze(1)) # these are log_probs, need to make them probs!
             # actions.append(torch.exp(self.har.action_layers(y.squeeze(1)))) # for future use
         
         # convert back to packedseq making it equal to compact/rolled version during forward pass
@@ -543,12 +752,16 @@ class CombinedModel(BaseModel):
 
         y_prev = self.hpe((x_padded[:,0,...].unsqueeze(1), z_n))
 
+        # if isinstance(gamma, torch.nn.Parameter):
+        #     gamma = gamma.to(x_padded.device,x_padded.dtype) # ensure correct device maybe useless
+
         # timestep is dim[1]
         for i in range(x_padded.shape[1]):
             # simple non-action pass-through
             # unsqueeze for channel dim
             y_i = self.hpe((x_padded[:,i,...].unsqueeze(1), z_n))
 
+            # moving average
             y_mavg = gamma*y_prev + (1-gamma)*y_i
             y_prev = y_mavg
             y.append(y_mavg)
@@ -560,7 +773,7 @@ class CombinedModel(BaseModel):
             h_i, (h_n, c_n) = self.har.recurrent_layers(y_i.unsqueeze(1), (h_n, c_n))
             h.append(h_i.squeeze(1))
 
-            z_n = torch.exp(h_i.squeeze(1)) # these are log_probs, need to make them probs!
+            z_n = torch.exp(self.har.action_layers(h_i.squeeze(1))) # these are log_probs, need to make them probs!
             # actions.append(torch.exp(self.har.action_layers(y.squeeze(1)))) # for future use
         
         # convert back to packedseq making it equal to compact/rolled version during forward pass
@@ -884,6 +1097,275 @@ class CombinedModel(BaseModel):
         return (y_mean, z_log_mean) #(y, z_log_mean)
         #torch.cat([a[i].repeat(b[i],1) for i in range(b.shape[0])])
     
+
+    def forward_v0_action_feedback_cleaned(self, x):
+        '''
+            in: x -> PackedSeq
+            out: y,z -> (PackedSeq, Tensor)
+        '''
+        depth, batch_sizes = x.data, x.batch_sizes
+        
+        ## pass with conditioning
+        y_ = self.hpe(depth.unsqueeze(1))
+        y_ = PackedSequence(data=y_, batch_sizes=batch_sizes)
+        
+
+        # interim action -- output is log softmax need to perform exp to get it one_hot like... 
+        z_log_ = self.har(y_)
+        z_ = torch.exp(z_log_)
+
+        _, lengths = pad_packed_sequence(x, batch_first=True)
+        z_seq_ = pack_sequence([z_[i].repeat(lengths[i],1) for i in range(lengths.shape[0])]).data
+
+        y = self.hpe_act((depth.unsqueeze(1), z_seq_))
+        y = PackedSequence(data=y, batch_sizes=batch_sizes) # must wrap as packed_seq before sending to har
+        z_log = self.har(y) # note these are logsoftmax numbers, but for argmax operation it doesn't matter
+        
+        alpha = self.act_0c_alpha #0.1 #0.0001 # TODO: ADD OPTION TO MAKE THIS A TORCH PARAM!!
+        z_log_mean = (alpha * z_log) + ((1-alpha) * z_log_)
+
+        y_mean = (alpha * y.data) + ((1-alpha) * y_.data)
+        y_mean = PackedSequence(data=y_mean, batch_sizes=batch_sizes)
+
+        return (y_mean, z_log_mean)
+    
+    def forward_v0_action_feedback_dual_hpe_har(self, x):
+        '''
+            in: x -> PackedSeq
+            out: y,z -> (PackedSeq, Tensor)
+            v12d
+        '''
+        depth, batch_sizes = x.data, x.batch_sizes
+        
+        ## pass with conditioning
+        y_ = self.hpe(depth.unsqueeze(1))
+        y_ = PackedSequence(data=y_, batch_sizes=batch_sizes)
+        
+
+        # interim action -- output is log softmax need to perform exp to get it one_hot like... 
+        z_log_ = self.har(y_)
+        z_ = torch.exp(z_log_)
+
+        _, lengths = pad_packed_sequence(x, batch_first=True)
+        z_seq_ = pack_sequence([z_[i].repeat(lengths[i],1) for i in range(lengths.shape[0])]).data
+
+        y = self.hpe_act((depth.unsqueeze(1), z_seq_))
+        y = PackedSequence(data=y, batch_sizes=batch_sizes) # must wrap as packed_seq before sending to har
+        # new use different lstm model in second stage!
+        z_log = self.har_act(y) # note these are logsoftmax numbers, but for argmax operation it doesn't matter
+        
+        #alpha =  #0.1 #0.0001 #
+        z_log_mean = (self.act_0c_alpha * z_log) + ((1-self.act_0c_alpha) * z_log_)
+
+        y_mean = (self.act_0c_alpha * y.data) + ((1-self.act_0c_alpha) * y_.data)
+        y_mean = PackedSequence(data=y_mean, batch_sizes=batch_sizes)
+
+        return (y_mean, z_log_mean)
+    
+
+    def forward_v0_action_feedback_refined(self, x):
+        '''
+            in: x -> PackedSeq
+            out: y,z -> (PackedSeq, Tensor)
+            v13d
+        '''
+        depth, batch_sizes = x.data, x.batch_sizes
+        
+        ## pass with conditioning
+        y_ = self.hpe(depth.unsqueeze(1))
+        y_ = PackedSequence(data=y_, batch_sizes=batch_sizes)
+        
+
+        # interim action -- output is log softmax need to perform exp to get it one_hot like... 
+        z_log_ = self.har(y_)
+        z_ = torch.exp(z_log_)
+
+        _, lengths = pad_packed_sequence(x, batch_first=True)
+        z_seq_ = pack_sequence([z_[i].repeat(lengths[i],1) for i in range(lengths.shape[0])]).data
+
+        y = self.hpe_act((depth.unsqueeze(1), z_seq_))
+        y = PackedSequence(data=y, batch_sizes=batch_sizes) # must wrap as packed_seq before sending to har
+        #z_log = self.har(y) # note these are logsoftmax numbers, but for argmax operation it doesn't matter
+        
+        #0.1 #0.0001 # TODO: ADD OPTION TO MAKE THIS A TORCH PARAM!!
+        #z_log_mean = (alpha * z_log) + ((1-alpha) * z_log_)
+
+        y_mean = (self.act_0c_alpha * y.data) + ((1-self.act_0c_alpha) * y_.data)
+        y_mean = PackedSequence(data=y_mean, batch_sizes=batch_sizes)
+        z_log_mean = self.har(y_mean)
+
+        return (y_mean, z_log_mean)
+    
+
+
+    def forward_v0_action_feedback_student_teacher(self, x, return_y_teacher=False, return_type=1):
+        '''
+            in: x -> (PackedSeq, PackedSeq) -> (Depth, Action)
+            out: y,z, z_teacher -> (PackedSeq, Tensor, Tensor) -> (Keypt, TeacherAct, StudentAct)
+        '''
+        ### x is tuple of two packed sequences
+        ### batch_sizes should be same for both
+        depth, batch_sizes, action = x[0].data, x[0].batch_sizes, x[1].data
+        
+        ## pass with conditioning through hpe_act -- teacher should be untrainable!
+        ## need to handle case when in valid mode
+        y_teacher = self.hpe_act((depth.unsqueeze(1), action)) #self.hpe_act((depth.unsqueeze(1), action))
+        y_teacher = PackedSequence(data=y_teacher, batch_sizes=batch_sizes)
+        
+        # depth, batch_sizes = x.data, x.batch_sizes
+        
+        ## -- should be ordinary no cond model! -- should be trainable!
+        y_student = self.hpe(depth.unsqueeze(1))
+        y_student = PackedSequence(data=y_student, batch_sizes=batch_sizes)
+        
+        if return_type == 1:
+            z_teacher = self.har_act(y_teacher)
+            z_student = self.har(y_student)
+        elif return_type == 2:
+            # skip softmax layer, this is done in loss func
+            _, (hn_teacher, _) = self.har_act.recurrent_layers(y_teacher)
+            z_teacher = self.har_act.action_layers[0](hn_teacher.squeeze(0))
+
+            _, (hn_student, _) = self.har.recurrent_layers(y_student) 
+            z_student = self.har.action_layers[0](hn_student.squeeze(0))
+        else:
+            raise NotImplementedError
+
+        # due to top1 acc using [-1] for calc we supply teacher in middle for now!
+        
+        return (y_student, z_teacher, z_student) if not return_y_teacher else \
+               (y_student, y_teacher, z_teacher, z_student)
+    
+
+    def forward_v0_action_feedback_temporal_smoothing(self, x, gamma=0.4):
+        '''
+            in: x -> PackedSeq
+            out: y,z -> (PackedSeq, Tensor)
+        '''
+        depth, batch_sizes = x.data, x.batch_sizes
+        
+        ## pass with conditioning
+        y_ = self.hpe(depth.unsqueeze(1))
+        y_ = PackedSequence(data=y_, batch_sizes=batch_sizes)
+        
+
+        # interim action -- output is log softmax need to perform exp to get it one_hot like... 
+        z_log_ = self.har(y_)
+        z_ = torch.exp(z_log_)
+
+        _, lengths = pad_packed_sequence(x, batch_first=True)
+        z_seq_ = pack_sequence([z_[i].repeat(lengths[i],1) for i in range(lengths.shape[0])]).data
+
+        y = self.hpe_act((depth.unsqueeze(1), z_seq_))
+        y = PackedSequence(data=y, batch_sizes=batch_sizes) # must wrap as packed_seq before sending to har
+        z_log = self.har(y) # note these are logsoftmax numbers, but for argmax operation it doesn't matter
+        
+        alpha = self.act_0c_alpha #0.1 #0.0001 # TODO: ADD OPTION TO MAKE THIS A TORCH PARAM!!
+        z_log_mean = (alpha * z_log) + ((1-alpha) * z_log_)
+
+        y_mean = (alpha * y.data) + ((1-alpha) * y_.data)
+        y_mean = PackedSequence(data=y_mean, batch_sizes=batch_sizes)
+
+        ## smooth y_mean
+        y_padded, lengths = pad_packed_sequence(y_mean, batch_first=True)
+        y_prev = y_padded[:, 0, ...]
+        y_list = []
+        y_list.append(y_prev)
+        for i in range(1, y_padded.shape[1]):
+            y_i = y_padded[:, i, ...]
+            y_mavg = gamma*y_prev + (1-gamma)*y_i
+            y_prev = y_mavg
+            y_list.append(y_mavg)
+        y_mean_smooth = pack_padded_sequence(torch.stack(y_list, dim=1), lengths, batch_first=True)
+
+        return (y_mean_smooth, z_log_mean)
+    
+
+
+
+
+    def forward_v0_action_feedback_eta_zeta(self, x, eta=0.5, zeta=0.5):
+        '''
+            in: x -> PackedSeq
+            out: y,z -> (PackedSeq, Tensor)
+        '''
+        depth, batch_sizes = x.data, x.batch_sizes
+        
+        ## pass with conditioning
+        y_ = self.hpe(depth.unsqueeze(1))
+        y_ = PackedSequence(data=y_, batch_sizes=batch_sizes)
+        
+
+        # interim action -- output is log softmax need to perform exp to get it one_hot like... 
+        z_log_ = self.har(y_)
+        z_ = torch.exp(z_log_)
+
+        _, lengths = pad_packed_sequence(x, batch_first=True)
+        z_seq_ = pack_sequence([z_[i].repeat(lengths[i],1) for i in range(lengths.shape[0])]).data
+
+        y = self.hpe_act((depth.unsqueeze(1), z_seq_))
+        y = PackedSequence(data=y, batch_sizes=batch_sizes) # must wrap as packed_seq before sending to har
+        z_log = self.har(y) # note these are logsoftmax numbers, but for argmax operation it doesn't matter
+        
+        z_log_mean = (zeta * z_log) + ((1-zeta) * z_log_)
+
+        y_mean = (eta * y.data) + ((1-eta) * y_.data)
+        y_mean = PackedSequence(data=y_mean, batch_sizes=batch_sizes)
+
+        return (y_mean, z_log_mean)
+
+
+    def forward_v0_action_feedback_dual_temporal_atten(self, x):
+        '''
+            in: x -> PackedSeq
+            out: y,z -> (PackedSeq, Tensor)
+        '''
+        depth, batch_sizes = x.data, x.batch_sizes
+        
+        ## pass with conditioning
+        y_ = self.hpe(depth.unsqueeze(1))
+        y_ = PackedSequence(data=y_, batch_sizes=batch_sizes)
+        
+
+        # interim action -- output is log softmax need to perform exp to get it one_hot like... 
+        # h_ is a packed seq of hidden states
+        h_, (_, _) = self.har.recurrent_layers(y_)
+
+        y_h_ = PackedSequence(data=torch.cat([y_.data, h_.data], dim=1), batch_sizes=batch_sizes)
+        betas_packed = PackedSequence(data=self.har_act.attention_layer(y_h_.data), batch_sizes=batch_sizes) # ? x 1
+
+        # get logits -- before softmax!
+        z_logits_packed = PackedSequence(data=self.har.action_layers[0](h_.data), batch_sizes=batch_sizes)
+        
+        betas_padded = pad_packed_sequence(betas_packed, batch_first=True)[0].transpose(1,2) # B x 1 x T
+        alphas_padded = F.softmax(betas_padded, dim=2) # B x 1 x T
+        z_logits_padded = pad_packed_sequence(z_logits_packed, batch_first=True)[0] # B x T x 45
+
+        # (B x 1 x T) * (B x T x 45) -> (B x 1 x 45) -> (B x 45)
+        z_logits_focused = torch.bmm(alphas_padded, z_logits_padded).squeeze(1)
+        
+        z_log_ = self.har.action_layers[1](z_logits_focused) # B x 45 --> focused
+        #z_log_ = self.har(y_)
+        z_ = torch.exp(z_log_)
+
+        _, lengths = pad_packed_sequence(x, batch_first=True)
+        z_seq_ = pack_sequence([z_[i].repeat(lengths[i],1) for i in range(lengths.shape[0])]).data
+        
+        
+        y = self.hpe_act((depth.unsqueeze(1), z_seq_))
+        y = PackedSequence(data=y, batch_sizes=batch_sizes) # must wrap as packed_seq before sending to har
+        z_log = self.har(y) # note these are logsoftmax numbers, but for argmax operation it doesn't matter
+        
+        alpha = self.act_0c_alpha #0.1 #0.0001 # TODO: ADD OPTION TO MAKE THIS A TORCH PARAM!!
+        z_log_mean = (alpha * z_log) + ((1-alpha) * z_log_)
+
+        y_mean = (alpha * y.data) + ((1-alpha) * y_.data)
+        y_mean = PackedSequence(data=y_mean, batch_sizes=batch_sizes)
+
+        return (y_mean, z_log_mean)
+
+
+
     def forward_v0_action_unrolled_legacy(self, x):
         ### thi is not a valid model only used for testing
         ### x is tuple of two packed sequences
@@ -1072,3 +1554,40 @@ class CombinedModel(BaseModel):
                 break
         print("[COMBINED_MODEL] SPECIAL_NOTICE   B_NORM_TRAIN_MODE: %s DROPOUT_TRAIN_MODE: %s" % (bnorm_training, dropout_training))
         return self
+    
+
+    # def on_epoch_train(self, epochs_trained):
+        # if getattr(self, 'hpe_act', False):
+        #     if self.hpe_act.action_cond_ver == 7.182:
+        #         self.act_0c_alpha += 0.2
+        #         print("new act 0c alpha", self.act_0c_alpha)
+
+        #         prob = self.hpe_act.equiprob_chance.probs.cpu().item()
+        #         if prob < 1.0:
+        #             prob += 0.01
+        #             self.hpe_act.equiprob_chance = torch.distributions.Bernoulli(torch.tensor([prob]))
+        #             print("NEW PROB: ", )
+        #if epochs_trained == 15 and getattr(self, 'hpe_act', False):
+            #if self.hpe_act.action_cond_ver == 7.182:
+                #self.hpe_act.on_epoch_train(epochs_trained)
+                
+                
+                
+        # if self.combined_version == '14d':
+        #     print("[COMBINED_MODEL] HPE_OLD_GRAD: %s, HPE_ACT_OLD_GRAD: %s" % \
+        #           (next(self.hpe.parameters()).requires_grad, next(self.hpe_act.parameters()).requires_grad))
+        #     print("[COMBINED_MODEL] Trainable Param Old:", self.param_count())
+        #     grad_required = next(self.hpe.parameters()).requires_grad
+        #     grad_required = not grad_required # invert
+        #     for param in self.hpe.parameters():
+        #         # invert hpe params
+        #         param.requires_grad = grad_required
+        #     grad_required = not grad_required
+        #     for param in self.hpe_act.parameters():
+        #         # the opposite of what happened to HPE
+        #         param.requires_grad = grad_required
+        #     print("[COMBINED_MODEL] HPE_NEW_GRAD: %s, HPE_ACT_NEW_GRAD: %s" % \
+        #           (next(self.hpe.parameters()).requires_grad, next(self.hpe_act.parameters()).requires_grad))
+        #     print("[COMBINED_MODEL] Trainable Param New:", self.param_count())
+            # switch hpe vs hpe act trainable...
+            #print(self.trainable_)

@@ -73,6 +73,9 @@ class BaselineHARModel(BaseModel):
 
         self.use_unrolled_lstm = use_unrolled_lstm
 
+        if attention_type != 'disabled':
+            print("[HAR] Using Attention %s" % attention_type)
+
         if attention_type == 'disabled':
             pass # don't add any new module, backwards compatibility
         elif attention_type == 'cnn_v1':
@@ -127,6 +130,26 @@ class BaselineHARModel(BaseModel):
                 nn.Sigmoid(), # try sigmoid as well...?
             )
             self.attention_forward = self.forward_unrolled_action_attention
+        elif attention_type[:8] == 'v7':
+            kernel_sz = 9 #int(attention_type[8:10]) # fixed kernel size
+            assert (kernel_sz % 2 == 1), "KernelSz must be an odd number!"
+            print("[HAR] Using CNN Attention with k=%s along temporal axis" % kernel_sz)
+            padding = int(kernel_sz/2) # same effect as floor
+            self.attention_layer = nn.Sequential(
+                nn.Conv2d(1,1,kernel_size=(kernel_sz,in_frame_dim+100), padding=(padding, 0)),
+                nn.ReLU(),
+            )
+            self.attention_forward = self.forward_unrolled_attention_cnn
+        elif attention_type[:8] == 'v8':
+            kernel_sz = 9 #3 #1 #int(attention_type[8:10]) # fixed kernel size
+            assert (kernel_sz % 2 == 1), "KernelSz must be an odd number!"
+            print("[HAR] Using CNN Action Attention with k=%s along temporal axis" % kernel_sz)
+            padding = int(kernel_sz/2) # same effect as floor
+            self.attention_layer = nn.Sequential(
+                nn.Conv2d(1,1,kernel_size=(kernel_sz,in_frame_dim+100), padding=(padding, 0)),
+                nn.ReLU(),
+            )
+            self.attention_forward = self.forward_unrolled_action_attention_cnn
 
     def forward(self, x, return_temporal_probs=False):
         # x must be either of type PackedSequence or of type tuple
@@ -208,6 +231,43 @@ class BaselineHARModel(BaseModel):
         
         return final_action
 
+
+    def forward_unrolled_action_attention_cnn(self, y, vlens=None):
+        # now tuple implies the first item is padded sequence and second item is a batch_sizes (vlens) tensor
+        padded_y, vlens = (y, vlens) if vlens is not None else pad_packed_sequence(y, batch_first=True) 
+        h_list = [] # list of hidden vectors
+        betas_list = []
+        action_lin_list = []
+        y_cat_h_list = []
+
+        h_n = torch.zeros(self.num_lstm_layers*1, padded_y.shape[0], self.lstm_layer_dim,
+                          device=padded_y.device, dtype=padded_y.dtype)
+        c_n = h_n.clone()
+
+        for i in range(padded_y.shape[1]):
+            h_i, (h_n, c_n) = self.main_layers(padded_y[:,i,:].unsqueeze(1), (h_n, c_n))
+            h_list.append(h_i.squeeze(1))
+            y_cat_h_list.append(torch.cat([padded_y[:,i,:], h_i.squeeze(1)], dim=1))
+            
+            action_lin_i = self.output_layers[0](h_i.squeeze(1)) # get linear output without softmax operation
+            action_lin_list.append(action_lin_i)
+
+        padded_h = torch.stack(h_list, dim=1) # B x T x 100
+        padded_y_cat_h = torch.stack(y_cat_h_list, dim=1) # B x T x 163
+        padded_betas = self.attention_layer(padded_y_cat_h.unsqueeze(1)).squeeze(3) # B x 1 x T
+        padded_action_lin = torch.stack(action_lin_list, dim=1) # B x T x 45
+
+        # B x 1 x T -> B x 1 x T (softmaxed)
+        padded_alphas = F.softmax(padded_betas, dim=2)
+
+        # (B x 1 x T) * (B x T x 45) -> (B x 1 x 45) -> (B x 45)
+        action_lin_focused = torch.bmm(padded_alphas, padded_action_lin).squeeze(1)
+
+        final_action = self.output_layers[1](action_lin_focused)
+        
+        return final_action
+
+
     def forward_unrolled(self, x, vlens=None):
         # now tuple implies the first item is padded sequence and second item is a batch_sizes (vlens) tensor
         padded_x, vlens = (x, vlens) if vlens is not None else pad_packed_sequence(x, batch_first=True) 
@@ -257,7 +317,7 @@ class BaselineHARModel(BaseModel):
             # cat [B x 63] with [B x 100] (need to squeeze as h is originally [1 x B x 100])
             x_cat_y.append(torch.cat([x_curr, h_n.squeeze(0)], dim=1))
 
-            # B x 1 x T x 1 -> B x 1 x T
+            # B x 1 x T x 163 -> B x 1 x T
             betas_reduced = self.attention_layer(torch.stack(x_cat_y, dim=1).unsqueeze(1)).squeeze(3)
 
             # B x 1 x T -> B x 1 x T

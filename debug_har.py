@@ -35,9 +35,9 @@ def debug():
     torch.multiprocessing.set_sharing_strategy('file_system')
 
     with elapsed_timer() as elapsed:
-        use_pca = False
+        use_pca = False #True
         load_depth = False
-        pad_seq = True
+        pad_seq = False
         ### note this stuff is meant to be wrapped by data loader class!!
         train_loader = JointsActionDataLoader(
                                                 data_dir='datasets/hand_pose_action',
@@ -49,10 +49,11 @@ def debug():
                                                 debug=False,
                                                 reduce=True,
                                                 pad_sequence=pad_seq,# True
-                                                max_pad_length=-1, # 100,
+                                                max_pad_length=120, #-1 # 100,
                                                 load_depth=load_depth, #False,
                                                 randomise_params=False,
                                                 use_pca=use_pca,
+                                                norm_keypt_dist=True,
                                             )
         
         lstm_baseline = BaselineHARModel(
@@ -61,7 +62,8 @@ def debug():
                                             num_lstm_units_per_layer=100,
                                             num_hidden_layers=1,
                                             lstm_dropout_prob=0.2,
-                                            use_unrolled_lstm=False#True#False#True
+                                            use_unrolled_lstm=True, #False,#True#False#True
+                                            attention_type='v8' #'v5' #'v4' #'v3', #'cnn_v1', #'cnn_v1_k7',
                                         )
         
         
@@ -124,10 +126,13 @@ def debug():
                    break
                 #print("Got ", i, " Shape: ", item[0][0].data.shape)
                 tmp_item = item # store running last item as the tmp_item
+                #print('\n',item[0].data[:4,:5])
                 tqdm_pbar.update(1)
         print("HAR Data Loading Took: %0.2fs\n" % (time.time() - t) )
         
-        
+        # for param in lstm_baseline.parameters():
+        #     param.requires_grad = False
+        #print(list(lstm_baseline.parameters()))
 
         #from copy import deepcopy
         print("\n=> [%s] Debugging single batch training for HAR" % elapsed())
@@ -145,7 +150,6 @@ def debug():
                 # we expect model to handle tuple
                 # we send it in similar fashion to *args
                 output = lstm_baseline(data)
-            optimizer.zero_grad()
             loss = criterion(output, target)
             loss.backward() # calc grads w.r.t weight/bias nodes
             optimizer.step() # update weight/bias params

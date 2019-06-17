@@ -43,7 +43,6 @@ def main(config, resume):
     # prepare model for testing
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     dtype = getattr(torch, config['dtype'])
-    target_dtype = getattr(torch, config['target_dtype'])
 
     # if getattr(model, 'final_layer.initialize_weights', False):
     print("Initialising PCA weights")
@@ -84,7 +83,7 @@ def main(config, resume):
                 # print('OUTPUT:\n', output[0][:10])
                 # print("ITEM_X:\n", data[0][0, 64,60:90])
                 # quit()
-                target = target.to(device, target_dtype)
+                target = target.to(device, dtype)
                 
                 # computing loss, metrics on test set
                 #loss = loss_fn(output, target) ## temporary disabled

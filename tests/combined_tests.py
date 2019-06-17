@@ -85,6 +85,7 @@ def _test_combined_data_loader_and_model(config_set=0):
         
         hpe_predict_action = False # this is globally false except if some config changes it
         attention_lstm_type = 'disabled'
+        trainable_gamma = False
 
         ### need to test use_wrist_com and also test crop 4 or 5
         
@@ -220,7 +221,7 @@ def _test_combined_data_loader_and_model(config_set=0):
             train_pca_space = False
             forward_type = 0
             gen_action_seq = False
-            action_cond_ver = 7
+            action_cond_ver = 6 #7
             combined_ver = '4d' #'2a' #'3d' #'2d'# forward_v1_hpe
             hpe_predict_action = False
         
@@ -285,6 +286,59 @@ def _test_combined_data_loader_and_model(config_set=0):
             combined_ver = '8d3' #'2a' #'3d' #'2d'# forward_v1_hpe
             hpe_predict_action = False
         
+        if config_set == 5.5:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 7
+            combined_ver = '8d4' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+            trainable_gamma = True # new
+        
+        if config_set == 5.6:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            attention_lstm_type = 'v5'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 7
+            combined_ver = '10d' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action= False
+            trainable_gamma = True # new
+        
+        if config_set == 5.7:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 7.12
+            combined_ver = '8d4' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+            trainable_gamma = True # new
+        
+        if config_set == 6:
+            # test simple hpe model that allows for simple lstm based training
+            loss = 'combined'
+            use_pca = False
+            eval_pca_space = False
+            train_pca_space = False
+            forward_type = 0
+            gen_action_seq = False
+            action_cond_ver = 7.181
+            combined_ver = '16d' #'2a' #'3d' #'2d'# forward_v1_hpe
+            hpe_predict_action = False
+        
+        
         train_loader = CombinedDataLoader(
                                                     data_dir='datasets/hand_pose_action',
                                                     dataset_type='train',
@@ -331,6 +385,7 @@ def _test_combined_data_loader_and_model(config_set=0):
                                         forward_type=forward_type,
                                         combined_version=combined_ver,
                                         force_trainable_params=True, # make all params trainable
+                                        trainable_smoothing=trainable_gamma,
         )
 
         print("\n[%s] Model Loaded, Trainable Params: " % elapsed(), combined_model.param_count())
@@ -415,6 +470,8 @@ def _test_combined_data_loader_and_model(config_set=0):
         print("10 Top-1 Acc:\n", top1_accs)
         print("10 Avg3D Errors:\n", avg_3d_errs)
 
+        if config_set == 5.5: print("FINAL GAMMA VAL:", combined_model.temporal_smoothing_param)
+        
         print("\n\n=> [%s] All debugging complete!\n" % elapsed())
 
 
