@@ -5,7 +5,7 @@ from utils.visualization import WriterTensorboardX
 import logging
 import yaml
 from data_utils import CombinedDataLoader, CollateCustomSeqBatch
-from data_utils.debug_plot import plotImg, plotImgV2
+from data_utils.debug_plot import plotImg, plotImgV2, plotImgV3
 from models import CombinedModel
 import torch
 import numpy as np
@@ -15,6 +15,7 @@ from test import _tensor_to
 from tensorboardX.utils import figure_to_image
 from torch.utils.data.dataloader import default_collate
 from tqdm import tqdm
+import matplotlib.cm as cmap
 
 os.environ["CUDA_VISIBLE_DEVICES"]='3'
 
@@ -125,17 +126,19 @@ def plot_and_show_inline(data_tuple, keypt_pred_px, pred_err, action_pred_probs,
 
 
 class DebugData(object):
-    def __init__(self, device=torch.device('cuda'), dtype=torch.float):
+    def __init__(self, resume_file, device=torch.device('cuda'), dtype=torch.float):
         self.device = device
         self.dtype = dtype
         #logger = logging.getLogger(__name__)
         #writer = WriterTensorboardX("logs/temp_log", logger, True)
-        self.config = yaml.load(open("configs/combined/student_teach.yaml"), Loader=yaml.SafeLoader)
+        checkpoint = torch.load(resume_file)
+        self.config = checkpoint['config'] #yaml.load(open("configs/combined/student_teach.yaml"), Loader=yaml.SafeLoader)
         self._fix_config()
         
         self.data_loader = CombinedDataLoader(**self.config['data_loader']['args'])
         self.val_data_loader = self.data_loader.split_validation()
         self.model = CombinedModel(**self.config['arch']['args']).to(self.device,self.dtype)
+        self.model.load_state_dict(checkpoint['state_dict'])
         self.model.eval() # set to eval mode
         
         self._fix_val_data_loader()
@@ -149,6 +152,10 @@ class DebugData(object):
         self.config['data_loader']['args']['shuffle'] = False
         self.config['data_loader']['args']['num_workers'] = 0 #8 #0
         self.config['data_loader']['args']['forward_type'] = -1
+        self.config['data_loader']['args']['custom_base_params'] = {
+            'crop_depth_ver': 4, #2,
+            'crop_pad': tuple([60, 60, 50.]), #400#tuple([60, 60, 200.]),
+        }
 
         if print_final:
             print(self.config['data_loader']['args'])
@@ -187,17 +194,19 @@ class DebugData(object):
         
     
     
-    def __getitem__(self, index):
+    def __getitem__(self, index, stop_frame=-1, verbose=1):
         # should be a tuple but not multiple data with/without tuple
         # ins => (depth, action_seq, joints)
         # targets => (joints, action)
         com_orig = self.val_data[index][-2]
         ins, targets = self.coll_single(self.val_data[index][-1])
-        print("depth   -> inputs[0].shape:", ins[0].data.shape)
-        print("act_seq -> inputs[1].shape:", ins[1].data.shape)
-        print("keypts  -> inputs[2].shape:", ins[2].data.shape)
-        print("keypts  -> targets[0].shape:", targets[0].data.shape)
-        print("act     -> targets[1].shape:", targets[1].data.shape)
+        if verbose > 0:
+            print("depth   -> inputs[0].shape:", ins[0].data.shape)
+            print("act_seq -> inputs[1].shape:", ins[1].data.shape)
+            print("keypts  -> inputs[2].shape:", ins[2].data.shape)
+            print("keypts  -> targets[0].shape:", targets[0].data.shape)
+            print("act     -> targets[1].shape:", targets[1].data.shape)
+            print("com_orig -> com_orig.shape:", com_orig.data.shape)
         
         ### atm we only get hpe results
         ##
@@ -206,47 +215,89 @@ class DebugData(object):
         #depths, batch_sizes = ins[0].data.unsqueeze(1), ins[0].batch_sizes
         depths_packed_seq = _tensor_to(ins[0], device=self.device, dtype=self.dtype)
         actions_seq = _tensor_to(ins[1].data, device=self.device, dtype=self.dtype)
+
+
+        ## apply stop frame mechanism to basically depth, hand pose and action at that particular frame
+        ## it does it by limitiing the seq.
+
+        if stop_frame > 0:
+            from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
+            if verbose > 0: print("Only processing first %d frames" % stop_frame)
+            depth_paddded, lens_depth = pad_packed_sequence(depths_packed_seq, batch_first=True)
+            keypts_padded, lens_keypts = pad_packed_sequence(gt_keypts, batch_first=True)
+
+            depth_paddded = depth_paddded[:, :stop_frame, ...]
+            keypts_padded = keypts_padded[:, :stop_frame, ...]
+            com_orig = com_orig[:stop_frame]
+
+            if not lens_depth.shape[0] == 1:
+                if verbose > 0: print("WARNING expected only one seq, are u using batch size > 1?")
+                assert 1 == 2
+            
+            else:
+                new_lens = torch.tensor([stop_frame]).to(lens_depth.device, lens_depth.dtype)
+
+            depths_packed_seq = pack_padded_sequence(depth_paddded, new_lens, batch_first=True)
+            gt_keypts = pack_padded_sequence(keypts_padded, new_lens, batch_first=True)
         
         
         # 1 => x -> hpe -> y ; 2 => x+z -> hpe_wAct -> y
-        pred_keypts_1, pred_keypts_2, pred_act_probs_1, pred_act_probs_2, pred_all_act_probs_1, pred_all_act_probs_2 = \
-                                self.forward_pass((depths_packed_seq, actions_seq), type='hpe_hpe_act_har')
+        # pred_keypts_1, pred_keypts_2, pred_act_probs_1, pred_act_probs_2, pred_all_act_probs_1, pred_all_act_probs_2 = \
+        pred_keypts, pred_act = self.forward_pass(depths_packed_seq, type='combined')
         #pred_keypts = self.forward_pass((depths, actions_seq), type='hpe_act')
-        pred_keypts_1 = PackedSequence(data=pred_keypts_1,batch_sizes=depths_packed_seq.batch_sizes)
-        pred_keypts_2 = PackedSequence(data=pred_keypts_2,batch_sizes=depths_packed_seq.batch_sizes)
+        # pred_keypts_1 = PackedSequence(data=pred_keypts_1,batch_sizes=depths_packed_seq.batch_sizes)
+        # pred_keypts_2 = PackedSequence(data=pred_keypts_2,batch_sizes=depths_packed_seq.batch_sizes)
         
         depths = depths_packed_seq.data
-        print("\ndepths.shape", depths.shape, depths.dtype, depths.device)
-        print("gt_keypts.shape", gt_keypts.data.shape, gt_keypts.data.dtype, gt_keypts.data.device)
-        print("pred_keypts.shape", pred_keypts_1.data.shape, pred_keypts_1.data.dtype, pred_keypts_1.data.device)
+        if verbose > 0:
+            print("\ndepths.shape", depths.shape, depths.dtype, depths.device)
+            print("gt_keypts.shape", gt_keypts.data.shape, gt_keypts.data.dtype, gt_keypts.data.device)
+            print("pred_keypts.shape", pred_keypts.data.shape, pred_keypts.data.dtype, pred_keypts.data.device)
+            print("pred_act.shape", pred_act.shape, pred_act.dtype, pred_act.device)
         
-        err_3d_1, y_mm_, y_mm = self.metrics[0](pred_keypts_1, gt_keypts, return_mm_data=True)
+        err_3d_1, y_mm_, y_mm = self.metrics[0](pred_keypts, gt_keypts, return_mm_data=True)
         err_3d_1 = err_3d_1.item()
         y_mm_uncentered_ = y_mm_.cpu().numpy() + com_orig[:, np.newaxis, ...]
         y_px_pred_1 = np.stack([self.data_loader.mm2px_multi(sample) for sample in y_mm_uncentered_])
-        print("3d_error: %0.3fmm" % err_3d_1)
+        #print("3d_error: %0.3fmm" % err_3d_1)
         
-        err_3d_2, y_mm_, y_mm = self.metrics[0](pred_keypts_2, gt_keypts, return_mm_data=True)
-        err_3d_2 = err_3d_2.item()
-        y_mm_uncentered_ = y_mm_.cpu().numpy() + com_orig[:, np.newaxis, ...]
-        y_px_pred_2 = np.stack([self.data_loader.mm2px_multi(sample) for sample in y_mm_uncentered_])
-        print("3d_error_2: %0.3fmm" % err_3d_2)
+        # err_3d_2, y_mm_, y_mm = self.metrics[0](pred_keypts_2, gt_keypts, return_mm_data=True)
+        # err_3d_2 = err_3d_2.item()
+        # y_mm_uncentered_ = y_mm_.cpu().numpy() + com_orig[:, np.newaxis, ...]
+        # y_px_pred_2 = np.stack([self.data_loader.mm2px_multi(sample) for sample in y_mm_uncentered_])
+        # print("3d_error_2: %0.3fmm" % err_3d_2)
+
+        #### new get errors at everytimestep 
+        ## [(T x 21 x 3), (T x 21 x 3)] --> (T x 21 x 3) --> (T x 21) --> (T)
+        err_3d_seq = torch.norm(y_mm_ - y_mm, p=2, dim=2).mean(dim=1).cpu().numpy()
+        #torch.norm((y_mm_ - y_mm).reshape(-1, 63), p=2, dim=1).cpu().numpy()
+        if verbose > 0: print("ERROR_3D_SHAPE", err_3d_seq.shape)
 
         
-        pred_act_probs_1 = torch.exp(pred_act_probs_1).detach().cpu().numpy().flatten()
-        pred_act_probs_2 = torch.exp(pred_act_probs_2).detach().cpu().numpy().flatten()
-        pred_all_act_probs_1 = torch.exp(pred_all_act_probs_1).detach().cpu().numpy()
-        pred_all_act_probs_2 = torch.exp(pred_all_act_probs_2).detach().cpu().numpy()
+        pred_act_probs_1 = torch.softmax(pred_act, dim=1).detach().cpu().numpy().flatten()
+        # pred_act_probs_2 = torch.exp(pred_act_probs_2).detach().cpu().numpy().flatten()
+        # pred_all_act_probs_1 = torch.exp(pred_all_act_probs_1).detach().cpu().numpy()
+        # pred_all_act_probs_2 = torch.exp(pred_all_act_probs_2).detach().cpu().numpy()
         # print(pred_act_probs_1.shape)
         # print(self.model.har.use_unrolled_lstm)
         # quit()
         
-        plot_and_show_inline(self.val_data[index], keypt_pred_px=y_px_pred_1, pred_err=err_3d_1,
-                            action_pred_probs=pred_act_probs_1,
-                            keypt_pred_px_2=y_px_pred_2, pred_err_2=err_3d_2,
-                            action_pred_probs_2=pred_act_probs_2,
-                            all_action_pred_probs_1=pred_all_act_probs_1,
-                            all_action_pred_probs_2=pred_all_act_probs_2)
+        # plot_and_show_inline(self.val_data[index], keypt_pred_px=y_px_pred_1, pred_err=err_3d_1,
+        #                     action_pred_probs=pred_act_probs_1,
+        #                     keypt_pred_px_2=y_px_pred_2, pred_err_2=err_3d_2,
+        #                     action_pred_probs_2=pred_act_probs_2,
+        #                     all_action_pred_probs_1=pred_all_act_probs_1,
+        #                     all_action_pred_probs_2=pred_all_act_probs_2)
+
+        return {
+            'raw_data': self.val_data[index],
+            'depths_gt': depths, # this may get changed
+            'keypt_gt': gt_keypts, # this may get changed (limited) so supplying here just in case
+            'keypt_pred_px': y_px_pred_1, # estimated joints for entire seq
+            '3d_err_seq': err_3d_1, # overall 3D error on entire seq
+            'action_pred_probs': pred_act_probs_1, # overall final class proba prediction of entire seq
+            '3d_err_seq_trajec': err_3d_seq, # a vector (trajectoty) of 3D errors one per timestep
+        }
     
     
     def forward_pass(self, x, type='hpe'):
@@ -273,6 +324,8 @@ class DebugData(object):
             
             #print("SHape", z_temporal_hpe.shape)
             return (y_hpe, y_hpe_act, z_hpe, z_hpe_act, z_temporal_hpe, z_temporal_hpe_act)
+        if type == 'combined':
+            return self.model(x)
         else:
             raise NotImplementedError
     

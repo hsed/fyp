@@ -36,7 +36,7 @@ def plotImgV2(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, crop_transf_matx, 
         raise NotImplementedError("Aug Plots Not Implemented Yet.")
     
     fig = plt.figure(dpi=250) #150 #, constrained_layout=True #dpi=150 # dpi=200
-
+    def_cmap = cmap.viridis
     # no ax3
     row_ids = [1]
     keypt_preds = [keypt_pred_px_1]
@@ -53,7 +53,7 @@ def plotImgV2(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, crop_transf_matx, 
     
     ### first row ###
     ax1 = plt.subplot2grid((n_rows, 10), (0, 0), colspan=4, fig=fig)
-    ax1.imshow(dpt_orig, cmap=cmap.jet)
+    ax1.imshow(dpt_orig, cmap=def_cmap)
     ax1.plot(keypt_px_orig[:,0], keypt_px_orig[:, 1], 'g.') ## linewidth=0 remove line...
     visualize_joints_2d(ax1, keypt_px_orig, joint_idxs=False)
     ax1.plot(com_px_orig[0], com_px_orig[1], 'rx', markersize=5)
@@ -85,7 +85,7 @@ def plotImgV2(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, crop_transf_matx, 
     for (row_id, keypt_pred_px, pred_err, action_probs) in zip(row_ids, keypt_preds, reg_errs, action_probs):
         ax4 = plt.subplot2grid((n_rows, 10), (row_id, 0), colspan=4, fig=fig) #fig.add_subplot(223)
         keypt_pred_px_crop = affineTransform2D(crop_transf_matx, keypt_pred_px)
-        ax4.imshow(dpt_orig, cmap=cmap.jet)
+        ax4.imshow(dpt_orig, cmap=def_cmap)
         ax4.plot(keypt_pred_px[:,0], keypt_pred_px[:,1], 'b.')
         visualize_joints_2d(ax4, keypt_pred_px, joint_idxs=False, linestyle='--')
         ax4.plot(com_px_orig[0], com_px_orig[1], 'rx', markersize=5)
@@ -94,7 +94,7 @@ def plotImgV2(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, crop_transf_matx, 
         ax5 = plt.subplot2grid((n_rows, 10), (row_id, 4), colspan=3, fig=fig)
         com_px_crop = affineTransform2D(crop_transf_matx, com_px_orig)
         keypt_px_crop = affineTransform2D(crop_transf_matx, keypt_px_orig)
-        ax5.imshow(dpt_crop, cmap=cmap.jet)
+        ax5.imshow(dpt_crop, cmap=def_cmap)
         ax5.plot(keypt_px_crop[:,0], keypt_px_crop[:,1], 'g.')
         ax5.plot(keypt_pred_px_crop[:,0], keypt_pred_px_crop[:,1], 'b.')
         visualize_joints_2d(ax5, keypt_px_crop, joint_idxs=False)
@@ -142,15 +142,16 @@ def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig,
         `keypt_px_orig` => Original (21, 3) keypoint matrix
         `com_px_orig` => Shape (3,) with [0],[1] => (x_px_coord,y_px_coord) and [2] as dpt_mm
     '''
-    
+    def_cmap = cmap.viridis # cmap.bone #
     fig = plt.figure(dpi=150) # dpi=200
     ax = fig.add_subplot(221) if show_aug_plots else fig.add_subplot(221) if keypt_pred_px is not None else fig.add_subplot(121)
-    ax.imshow(dpt_orig, cmap=cmap.jet)
+    ax.imshow(dpt_orig, cmap=def_cmap)
     ax.plot(com_px_orig[0], com_px_orig[1], 'rx', markersize=5)
     ax.plot(keypt_px_orig[:,0], keypt_px_orig[:, 1], marker='.', linewidth=0, color='g') ## remove line...
     visualize_joints_2d(ax, keypt_px_orig, joint_idxs=False)
 
     ax.set_title("Original Depth & Joints")
+    ax.axis='off'
 
     
     
@@ -160,17 +161,18 @@ def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig,
     
 
     ax2 = fig.add_subplot(222) if show_aug_plots else fig.add_subplot(122)
-    ax2.imshow(dpt_crop, cmap=cmap.jet)
+    ax2.imshow(dpt_crop, cmap=def_cmap)
     ax2.plot(com_px_crop[0], com_px_crop[1], 'rx')
     ax2.plot(keypt_px_crop[:,0], keypt_px_crop[:,1], 'g.')
     ax2.set_title("Cropped Depth")
+    ax2.axis='off'
 
     visualize_joints_2d(ax2, keypt_px_crop, joint_idxs=False)
 
     if keypt_pred_px is not None:
         keypt_pred_px_crop = affineTransform2D(crop_transf_matx, keypt_pred_px)
         ax_ = fig.add_subplot(223)
-        ax_.imshow(dpt_orig, cmap=cmap.jet)
+        ax_.imshow(dpt_orig, cmap=def_cmap)
         ax_.plot(keypt_pred_px[:,0], keypt_pred_px[:,1], 'b.')
         visualize_joints_2d(ax_, keypt_pred_px, joint_idxs=False, linestyle='--')
         ax_.set_title("Orig Depth & Pred Joints")
@@ -204,13 +206,13 @@ def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig,
             aug_val = "%0.2f" % aug_val
 
         ax3 = fig.add_subplot(223)
-        ax3.imshow(dpt_orig_aug, cmap=cmap.jet)
+        ax3.imshow(dpt_orig_aug, cmap=def_cmap)
         ax3.plot(com_px_orig_aug[0], com_px_orig_aug[1], 'kx')
         ax3.plot(keypt_px_orig_aug[:,0], keypt_px_orig_aug[:,1], 'g.')
         ax3.set_title("Orig + " + aug_mode.name + "\n(Val: %s)" % aug_val)
 
         ax4 = fig.add_subplot(224)
-        ax4.imshow(dpt_crop_aug, cmap=cmap.jet)
+        ax4.imshow(dpt_crop_aug, cmap=def_cmap)
         ax4.plot(com_px_crop_aug[0], com_px_crop_aug[1], 'kx')
         ax4.plot(keypt_px_crop_aug[:,0], keypt_px_crop_aug[:,1], 'g.')
         ax4.set_title("Cropped + " + aug_mode.name + "\n(Val: %s) = Final" % aug_val)
@@ -239,6 +241,96 @@ def plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig,
         #             transparent=True,
         #             bbox_inches='tight',
         #             pad_inches=0.01)
+        #plt.show()
+        return plt.gcf()
+
+
+
+def plotImgV3(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, 
+            crop_transf_matx, dpt_orig_aug=None, dpt_crop_aug=None, 
+            aug_transf_matx=None, aug_mode=None, aug_val=None,
+            show_aug_plots=True, return_fig=False, keypt_pred_px=None, pred_err=-1,
+            keypt_mode='gt', fig_save_loc='debug_fig.pdf'):
+    '''
+        All matrices supplied are homogenous projection matrix must work with
+        homogenous coords so [x, y, 1]^T. for x,y pixels.
+        `dpt_orig` => Original 2D depthmap
+        `keypt_px_orig` => Original (21, 3) keypoint matrix
+        `com_px_orig` => Shape (3,) with [0],[1] => (x_px_coord,y_px_coord) and [2] as dpt_mm
+    '''
+    def_cmap = cmap.bone #viridis # cmap.bone #
+    fig = plt.figure(dpi=150) # dpi=200
+    #ax = plt.gca() #fig.add_subplot(221) if show_aug_plots else fig.add_subplot(221) if keypt_pred_px is not None else fig.add_subplot(121)
+    # ax.imshow(dpt_orig, cmap=def_cmap)
+    # ax.plot(com_px_orig[0], com_px_orig[1], 'rx', markersize=5)
+    # ax.plot(keypt_px_orig[:,0], keypt_px_orig[:, 1], marker='.', linewidth=0, color='g') ## remove line...
+    # visualize_joints_2d(ax, keypt_px_orig, joint_idxs=False)
+
+    # ax.set_title("Original Depth & Joints")
+    # ax.axis='off'
+
+    
+    
+    com_px_crop = affineTransform2D(crop_transf_matx, com_px_orig)
+    keypt_px_crop = affineTransform2D(crop_transf_matx, keypt_px_orig)
+
+    
+    ax2 = plt.Axes(fig, [0., 0., 1., 1.]) #gca() 
+    #ax2 = fig.add_subplot(222) if show_aug_plots else fig.add_subplot(122)
+
+    #ax2.set_title("Cropped Depth")
+    ax2.set_axis_off()
+    fig.add_axes(ax2)
+    ax2.imshow(dpt_crop, cmap=def_cmap)
+
+    if keypt_mode == 'both':
+        ax2.plot(com_px_crop[0], com_px_crop[1], 'rx')
+        ax2.plot(keypt_px_crop[:,0], keypt_px_crop[:,1], 'g.')
+        keypt_pred_px_crop = affineTransform2D(crop_transf_matx, keypt_pred_px)
+        ax2.plot(keypt_pred_px_crop[:,0], keypt_pred_px_crop[:,1], 'b.')
+        visualize_joints_2d(ax2, keypt_px_crop, joint_idxs=False)
+        visualize_joints_2d(ax2, keypt_pred_px_crop, joint_idxs=False, linestyle='--')
+    if keypt_mode == 'gt':
+        ax2.plot(com_px_crop[0], com_px_crop[1], 'rx')
+        ax2.plot(keypt_px_crop[:,0], keypt_px_crop[:,1], 'g.')
+        visualize_joints_2d(ax2, keypt_px_crop, joint_idxs=False)
+    elif keypt_mode == 'pred':
+        if keypt_pred_px is not None:
+            ax2.plot(com_px_crop[0], com_px_crop[1], 'rx') # try to not print twice, elif should be fine
+            keypt_pred_px_crop = affineTransform2D(crop_transf_matx, keypt_pred_px)
+            ax2.plot(keypt_pred_px_crop[:,0], keypt_pred_px_crop[:,1], 'b.')
+            visualize_joints_2d(ax2, keypt_pred_px_crop, joint_idxs=False, linestyle='--')
+    #     visualize_joints_2d(ax_, keypt_pred_px, joint_idxs=False, linestyle='--')
+            
+
+    # if keypt_pred_px is not None:
+    #     keypt_pred_px_crop = affineTransform2D(crop_transf_matx, keypt_pred_px)
+    #     ax_ = fig.add_subplot(223)
+    #     ax_.imshow(dpt_orig, cmap=def_cmap)
+    #     ax_.plot(keypt_pred_px[:,0], keypt_pred_px[:,1], 'b.')
+    #     visualize_joints_2d(ax_, keypt_pred_px, joint_idxs=False, linestyle='--')
+    #     ax_.set_title("Orig Depth & Pred Joints")
+
+    #     ax2.plot(keypt_pred_px_crop[:,0], keypt_pred_px_crop[:,1], 'b.')
+    #     visualize_joints_2d(ax2, keypt_pred_px_crop, joint_idxs=False, linestyle='--')
+    
+
+    # if pred_err != -1:
+    #     plt.suptitle("Average 3D Error: %dmm" % pred_err)
+
+    
+    if not return_fig:
+        plt.tight_layout()
+        plt.show()
+    else:
+        plt.tight_layout(pad=0.0, rect=[0,0,1,1])
+        #plt.show()
+        plt.gcf().savefig(fig_save_loc,
+                    format='pdf',
+                    dpi=300,
+                    transparent=True,
+                    bbox_inches='tight',
+                    pad_inches=0.00)
         #plt.show()
         return plt.gcf()
 
