@@ -7,12 +7,14 @@ scalar_tag: avg_3d_err_mm
 axis_title: "Avg 3D Error" # this will be Prepended with Train/Valid
 max_epochs: 30
 runs:
+  #- "0608_1005" # baseline
   - "0608_1829" # resent
   - "0608_2102" # lin
-  - "0609_0002" # lin+res
+  - "0608_1705" #"0609_0002" # lin+res
   - "0608_1649" # lin++
   - "0608_1924" # lin++ + res
 run_tags:
+  #- "Baseline"
   - "ResNet"
   - "Linear"
   - "Lin+Res" # v6 with embedding

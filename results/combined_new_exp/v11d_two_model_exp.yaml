@@ -14,14 +14,14 @@ runs:
   - "0609_2103" 
   #- "0609_1929"
   - "0612_1359" #"0609_1533" # NEW BEST BASELINE!!
-  - "0609_1636" 
+  #- "0609_1636" 
   - "0609_1814" 
 run_tags:
   - "Baseline"
   - "$p_{eq}=1.0$"
   #- "$p_{eq}=0.99$"
   - "$p_{eq}=0.95$"
-  - "$p_{eq}=0.9$" # faster than linear, similar num of params but sparser gradients during backprop as idx select worse results
+  #- "$p_{eq}=0.9$" # faster than linear, similar num of params but sparser gradients during backprop as idx select worse results
   - "$p_{eq}=0.8$"
 legend_loc: 2
 base_path: results/combined_new_exp/logs

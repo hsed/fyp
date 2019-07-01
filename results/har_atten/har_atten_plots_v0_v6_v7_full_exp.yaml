@@ -1,0 +1,20 @@
+# all paths are relative to root folder!
+# $> python results\plot_learn_curve.py -c results\data.yaml
+
+model_name: HPE 
+title: "HAR Attention Long Training Experiment (Types 6 \\& 7)"
+scalar_tag: top1_acc 
+axis_title: "Top 1 Accuracy (x100\\%)" # this will be Prepended with Train/Valid
+max_epochs: 200
+runs:
+  - "0531_0551" # baseline
+  - "0618_0232"
+  - "0618_0301"
+run_tags:
+  - "Baseline"
+  - "$t=6$" # v5
+  - "$t=7$" # v6
+legend_loc: 4
+base_path: results/har_atten/logs
+save_path: results/plot_pdfs/har_atten_long_exp_learn_curves.pdf
+x_ticks: 11 # good number for 30 epochs

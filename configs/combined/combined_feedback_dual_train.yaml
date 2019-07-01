@@ -27,6 +27,7 @@
 # 0531_0551 (or 0528_1657) -- new best ~ 0.4234 // 0.7234/0.8608 check again seq 120    better top3 acc -- causes better combined baseline 
 # 0531_0558 -- very slightly better @ 0.411 (0.414 for seq 120) // 0.7443/0.8556 seq of 300
 # 0609_0145
+# 'saved/BaselineHPE/0618_0221/model_best.pth' #
 
 name: BaselineCombined # for use with tensorboard
 n_gpu: 1

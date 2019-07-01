@@ -7,7 +7,7 @@ arch:
     in_frame_dim: 63 #30 # 63 # use 30 if using pca!
     num_hidden_layers: 1
     use_unrolled_lstm: true #false #false #false #true #false #true #false #true # new # true: about 14x slower
-    attention_type: v8 #v5 #v7 #v5 # v6 # v5 <-- best #disabled #v4 #v3 #disabled #cnn_v1_k9 #cnn_v2_k9 #cnn_v1_k7 #cnn_v1_k9 #cnn_v1_k9 # cnn_v1_k5 # cnn_v1_k3 # cnn_v1 # disabled
+    attention_type: v5 #v5 #v7 #v5 # v6 # v5 <-- best #disabled #v4 #v3 #disabled #cnn_v1_k9 #cnn_v2_k9 #cnn_v1_k7 #cnn_v1_k9 #cnn_v1_k9 # cnn_v1_k5 # cnn_v1_k3 # cnn_v1 # disabled
 data_loader:
   type: JointsActionDataLoader
   args:
@@ -15,7 +15,7 @@ data_loader:
     dataset_type: train
     batch_size: 20 #4
     shuffle: true
-    validation_split: -0.2 #-1.0 #-0.2 #-1.0
+    validation_split: -1.0 #-0.2 #-1.0 #-0.2 #-1.0
     num_workers: 8
     pad_sequence: true #false #true #false #true # padding always occur in unrolled version
     max_pad_length: 120 #300 #120 #300 #150 #-1 #100 #-1 #100
@@ -41,7 +41,7 @@ metrics:
 #     step_size: 50
 #     gamma: 0.1
 trainer:
-  epochs: 100 #200 #30 # 100
+  epochs: 200 #100 #200 #30 # 100
   save_dir: saved/
   save_period: 500
   verbosity: 2

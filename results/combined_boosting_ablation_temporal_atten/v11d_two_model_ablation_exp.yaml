@@ -17,10 +17,10 @@ runs:
   - "0615_0925" 
 run_tags:
   - "Baseline"
-  - "2HPE,1HAR,TrAll"
-  - "2HPE, 1HAR,Tr1(HPE,HAR)"
-  - "2HPE,2HAR,Tr1(HPE,HAR)"
-  - "2HPE,2HAR,Tr1HPE,Tr2HAR" # faster than linear, similar num of params but sparser gradients during backprop as idx select worse results
+  - "\\#1"
+  - "\\#2"
+  - "\\#3"
+  - "\\#4" # faster than linear, similar num of params but sparser gradients during backprop as idx select worse results
   
 legend_loc: [2,3]
 base_path: results/combined_boosting_ablation_temporal_atten/logs

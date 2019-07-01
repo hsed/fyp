@@ -12,15 +12,15 @@ max_epochs: 30
 runs:
   - "0609_2057"
   - "0612_1359" 
-  - "0613_0019"
+  # - "0613_0019"
   - "0616_1536" # NEW BEST!! 
 run_tags:
   - "Baseline"
-  - "2HPE, 1HAR,Tr1(HPE,HAR)"
-  - "+Smoothing"
-  - "+ActAttention" # faster than linear, similar num of params but sparser gradients during backprop as idx select worse results
+  - "Method \\#3"
+  # - "+Smoothing"
+  - "+Action Attention" # faster than linear, similar num of params but sparser gradients during backprop as idx select worse results
 legend_loc: [2,3] # 2
 base_path: results/combined_boosting_ablation_temporal_atten/logs
-save_path: results/plot_pdfs/combined_v11d_extension_exp.pdf
+save_path: results/plot_pdfs/combined_v11d_extension_exp_new.pdf
 x_ticks: 5 # good number for 30 epochs
 fig_size: [10, 8]

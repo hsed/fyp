@@ -36,12 +36,12 @@ dtype: float
 arch:
   type: CombinedModel
   args:
-    hpe_checkpoint: 'saved/BaselineHPE/0608_1050/model_best.pth' # 0129 is much better!!! #2046 'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
+    hpe_checkpoint: 'saved/BaselineHPE/0609_0145/model_best.pth' # 0129 is much better!!! #2046 'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
     har_checkpoint: 'saved/BaselineLSTM/0604_1056/model_best.pth' #0531_0551 0531_1625 0531_0551 saved/BaselineLSTM/0531_1623/model_best.pth #bad 1618;  #1026: best 'saved/BaselineLSTM/0521_1300/model_best.pth' #1346 # this is the manual loop (unrolled) version; for rolled/compact version use 1346 (padding better) or 1300 (no padding)
     pca_checkpoint:
     hpe_args:
       input_channels: 1
-      action_cond_ver: 7.15 # use 0 or 6 => no action cond, 6 => best action cond using film 
+      action_cond_ver: 7.181 # use 0 or 6 => no action cond, 6 => best action cond using film 
       dynamic_cond: false # true -> turn off after X epochs
       pca_components: 30
       dropout_prob: 0.3
