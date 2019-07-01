@@ -32,3 +32,4 @@ results/hpe_cond
 results/hpe_logs
 results/**/logs
 results/**/*.zip
+results/**/visual_pose_depth_action
