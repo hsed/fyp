@@ -1,7 +1,7 @@
 # Final Year Project: Joint Hand Pose Estimation and Action Recognition
 
 <!-- ![logo](img/title_teaser.svg) -->
-<img src="img/title_teaser.svg" width=200 alt="logo" style="display: block; margin-left: auto; margin-right: auto; width: 50%;">
+<p align="center"><img src="img/title_teaser.svg" width=200 alt="logo"></p>
 
 ## About
 >This project investigates the design of a framework to fuse two vastly different deep learning
