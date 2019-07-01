@@ -227,3 +227,13 @@ ALL v2D Experiements -- using val 0.2 -- 3 epochs
 
 
 ### Testing 2-step training model with attention
+
+
+
+
+### new experiments
+all 30 epoch tests on act in act out
+har is chosen as 100ep
+
+if nothing useful gets out here then do 100ep test but itll be harder
+
