@@ -1,10 +1,82 @@
-repeat all hpe cond experiments
 
-repeat all equiprob % use experiments
 
-repeat all combined experiments
+### Choosing deterministic or random-ish Experiements
+We carried out a few experiments to investigate deterministic vs non-deterministic settings
 
-HAR is fine!!
+in general, while deterministic experiments are repeatable, the whole idea of adata augmentation lies on the fact that
+data generation is randomised and new data is generated AT EVERY EPOCH so that there is no sign of overfitting
+
+we tested several combinations of data augmentation and determinisic setting. from these we dfound that one with all augment gave the best lower bound (0410_1838) although it was still worse than no augmentation (0420_1720 or 1946). Other experiements in this setting start from BaselineHPE/0410_1720 till about 1900 or 2000.
+
+Now we changed to new device to results are a bit skewed but nevertheless all 3 augmentations WITH RANDOMNESS (BaselineHPE/0411_0220
+) is much better that without randomness (BaselineHPE/0410_2011). 
+
+However when it comes to augmentation vs no augmentation, augmentation doesn't REALLY help, non-augmentation either always win or comes very close, maybe for long term epoch it might be better but atleast till 20 epoch, augmentation doesn't really help...
+
+Maybe this implies that augmentation is 'too stochastic'?
+
+### Choosing the Validation Set
+
+- Tried Trainset 0.8:0.2 vs 1.0+Test_Set method, validation curve do not follow test-set. Possible reasoning: PCA used entire train-set, train-set gets too small. See '' vs '' 
+
+<INSERT PIC HERE>
+
+
+- Newer method: Tried train set 1.0 + 0.2 Test Set. Actually, good upper bound on test set which is good. Also matches quite closely. See experiment BaselineHPE/0419_1744 vs BaselineHPE/0417_1634
+
+< insert picture here >
+
+
+Answer: 
+1.0 Trainset + 0.2 Validation Set for Quick Testing w/ 20-30EP training depending on impact. With ~10EP early stopping. no checkpointing but maybe saving the best model and if best model != last model then saving that too for continuation.
+
+---
+
+### Choosing the Cropping Method
+
+We applied four different cropping methods see statement above. The best we found was method #2 and we will stick with that, even though it produces worse results when visually seeing it images get squashed but overall error is low. **NEED TO VERIFY THAT AFTER PREDICTION IT LOOKS GOOD TOO**. **SEE HPE_DEPTH_CROP PAGE**
+
+< insert picture here>
+
+### Data Augmentation
+This does slight improvements but after a long number of epochs, so its not very benefitial -> 
+
+Tests : Best data aug : 0 (None) + 1 (Rot) + 3 (Trans) & PCA: 0, 1, 2 (Scale), 3.
+
+BaselineHPE/0419_1007 (note this is full test set maybe its better to show validation partial test set as we'll use that in continuation!)
+
+
+### Baseline Performance
+Test-Set as shown in BaselineHPE/0417_1634
+
+We will do a full baseline validation set performance as well....
+
+Validation: BaselineHPE/0419_1744
+
+
+### Action Test
+We perform one test with having target with action and using combined loss function. loss is too high and we get a much worse value. we didnt test with alpha i.e. how much of one component to use. 
+
+In future we will try to cleate a new class and add new data loaders that convert action to one hot and so on and then we have an embedding layer that converts 1x1x45 to 128x128x45 -> 64x64x32 or something like that basically 1/2 or 1/4 or 3/4 of the channels of input then we use the network as is and try to see if any imprvement possible we can also use VAE
+
+
+
+## NEW: A NOTE ON BATCH_NORM:
+VERY IMP:
+batchnorm2d has 2 additional params during intialisation. One param is `affine` and the other is `track_running_stats`. Both are quite helpful for us to do various things for our model.
+
+NEED TO CHANGE CODE: such that whenever a context layer is present in bn_relu_block simply set affine to FALSE such that when traning the affine stuff is not done for batch norm this is because affine transform is handled by film layers (later down the line). however the standardisation still takes place as before along with running stats. This way theoretically we should achieve very similar or exact performance as before.
+
+Note: must re-run for 30epochs and test some score on hpe then make changes and re-run also first save on github to easily undo any changes! its important to test the effects! Also if you do this you need to consider what happens to old saves do they still work?
+
+So for instead of hacky context layers that are not actually supplied you basically set affine=False for batch_norm
+
+
+NOW FOR COMBINED MODEL DURING FINE TUNING:
+during fine tuning there are newer batch sizes and many different sizes for which we DO NOT know in advance of size
+for some models it can be as low as 2 or 4. In this case its best to set `track_running_stats` to FALSE this is same as setting `training` to FALSE. this way always its ensured that EXACT CURRENT batch_size is used to calc mean and variance so a large change in batch_sizes wont cause big issues so this is equivalent to train mode but then the training can still occur. nonetheless training is training of affine params so if we use some model with action condition that that too is disabled. and it degenerated to exactly as training = false
+
+for this you should basically loop around all modules in for loop fashion and for every nn.batchnorm2d found simply set `track_running_stats` to FALSE only do this for certain version numbers..... so like maybe v4d first then v3d and then maybe v2d as v2d2
 
 ### HPE Tests
 
