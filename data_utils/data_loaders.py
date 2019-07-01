@@ -143,7 +143,7 @@ class CombinedDataLoader(BaseDataLoader):
     def __init__(self, data_dir, dataset_type, batch_size, shuffle, 
             validation_split=0.0, num_workers=1, debug=False, reduce=False, pad_sequence=False,
             max_pad_length=-1, randomise_params=True, use_wrist_com=False,
-            use_pca=False, forward_type=0, gen_action_seq=False):
+            use_pca=False, forward_type=0, gen_action_seq=False, custom_base_params=None):
         
         '''
             input_types: depth, keypts, 
@@ -201,6 +201,10 @@ class CombinedDataLoader(BaseDataLoader):
             'pca_components': 30,
             'debug_mode': debug,
         }
+
+        if isinstance(custom_base_params, dict):
+            print("[DATALOADER] Merging default base params with custom one")
+            trnsfrm_base_params.update(custom_base_params)
 
         #not needed atm as NLLloss needs only class idx
         #ActionOneHotEncoder(action_classes=45)
@@ -266,30 +270,30 @@ class CombinedDataLoader(BaseDataLoader):
         self.params = trnsfrm_base_params # for later lookups if needed
 
         ##### setup data to use sample for viewing output during training #####
-        # if self.val_dataset is not None and action_out:
-        #     #
-        #     old_transform = self.val_dataset.transform # keep a copy
-        #     self.val_dataset.transform = None # temporariliy disable all transform
-        #     self.val_dataset.ignore_cache_for_har = True # temporarily get item outside cache
-        #     item = self.val_dataset[8]
-        #     self.val_dataset.transform = old_transform
-        #     self.val_dataset.ignore_cache_for_har = False
+        if self.val_dataset is not None and action_out:
+            #
+            old_transform = self.val_dataset.transform # keep a copy
+            self.val_dataset.transform = None # temporariliy disable all transform
+            self.val_dataset.ignore_cache_for_har = True # temporarily get item outside cache
+            item = self.val_dataset[8]
+            self.val_dataset.transform = old_transform
+            self.val_dataset.ignore_cache_for_har = False
 
-        #     #self.debug_dataset = deepcopy(self.val_dataset)
-        #     new_transform = deepcopy(self.val_dataset.transform )
-        #     if isinstance(new_transform, transforms.Compose):
-        #             # change ToTuple ExtractType
-        #             new_transform.transforms[-1] = ToTuple(extract_type='depth_joints_seq_debug')
-        #             for trns in new_transform.transforms:
-        #                 if isinstance(trns, DepthSeqCropper):
-        #                     trns.return_debug_data = True
-        #                     self.mm2px_multi = trns.depth_cropper.mm2px_multi # needed to plot output during training
-        #                     self.debug_data = new_transform(item)
-        #                     print('[DATALOADER] FOUND DEPTH_CROPPER + VAL_SET + ACTION_OUT, WILL PRINT SAMPLE OUT DURING TRAIN')
-        #                     break # break for loop as we expect only one depth_seq_cropper in list
-        #     self.debug_transforms = new_transform # for later use if needed       
-        # else:
-        #     pass # do not create the attribute 
+            #self.debug_dataset = deepcopy(self.val_dataset)
+            new_transform = deepcopy(self.val_dataset.transform )
+            if isinstance(new_transform, transforms.Compose):
+                    # change ToTuple ExtractType
+                    new_transform.transforms[-1] = ToTuple(extract_type='depth_joints_seq_debug')
+                    for trns in new_transform.transforms:
+                        if isinstance(trns, DepthSeqCropper):
+                            trns.return_debug_data = True
+                            self.mm2px_multi = trns.depth_cropper.mm2px_multi # needed to plot output during training
+                            self.debug_data = new_transform(item)
+                            print('[DATALOADER] FOUND DEPTH_CROPPER + VAL_SET + ACTION_OUT, WILL PRINT SAMPLE OUT DURING TRAIN')
+                            break # break for loop as we expect only one depth_seq_cropper in list
+            self.debug_transforms = new_transform # for later use if needed       
+        else:
+            pass # do not create the attribute 
 
         collate_fn_params = dict(
             pad_sequence=pad_sequence,

@@ -228,6 +228,8 @@ class CombinedModel(BaseModel):
             '15d2': partial(self.forward_v0_action_feedback_student_teacher, return_y_teacher=True),
             '15d3': partial(self.forward_v0_action_feedback_student_teacher, return_y_teacher=True, return_type=2),
             '16d': self.forward_v0_action_feedback_dual_temporal_atten,
+            '17d': self.forward_v0_action_feedback_logits,
+            '18d': self.forward_v0_action_feedback_z_arith_mean,
         }
 
         # set here to ensure init_metric fn can access these values
@@ -372,7 +374,8 @@ class CombinedModel(BaseModel):
             
             elif self.combined_version == '11d' or self.combined_version == '13d' \
                  or self.combined_version == '14d' or self.combined_version == '11d3' \
-                 or self.combined_version == '11d4' or self.combined_version == '11d5':
+                 or self.combined_version == '11d4' or self.combined_version == '11d5' \
+                 or self.combined_version == '17d' or self.combined_version == '18d':
                 print("[COMBINED_MODEL] V11D/V13D/14D: Setting all layers layers (except hpe1//incl. PCA2) trainable, ensuring HPEAct is wActCond.")
                 print("[COMBINED_MODEL] Enforcing train_pca_space = False for HPE")
                 print("[COMBINED_MODEL] V11/V13/V14 uses Act0cAlpha: %0.2f" % self.act_0c_alpha)
@@ -1366,6 +1369,80 @@ class CombinedModel(BaseModel):
 
 
 
+    def forward_v0_action_feedback_logits(self, x):
+        '''
+            in: x -> PackedSeq
+            out: y,z -> (PackedSeq, Tensor)
+        '''
+        depth, batch_sizes = x.data, x.batch_sizes
+        
+        ## pass with conditioning
+        y_ = self.hpe(depth.unsqueeze(1))
+        y_ = PackedSequence(data=y_, batch_sizes=batch_sizes)
+        
+
+        # interim action -- output is log softmax need to perform exp to get it one_hot like...
+        _, (h_, _) = self.har.recurrent_layers(y_) 
+        z_logit_ = self.har.action_layers[0](h_.squeeze(0))
+        z_log_ = self.har.action_layers[1](z_logit_)
+        z_ = torch.exp(z_log_)
+
+        _, lengths = pad_packed_sequence(x, batch_first=True)
+        z_seq_ = pack_sequence([z_[i].repeat(lengths[i],1) for i in range(lengths.shape[0])]).data
+
+        y = self.hpe_act((depth.unsqueeze(1), z_seq_))
+        y = PackedSequence(data=y, batch_sizes=batch_sizes) # must wrap as packed_seq before sending to har
+        
+        _, (h, _) = self.har.recurrent_layers(y)
+        z_logit = self.har.action_layers[0](h.squeeze(0)) # note these are logsoftmax numbers, but for argmax operation it doesn't matter
+        
+        alpha = self.act_0c_alpha #0.1 #0.0001 # TODO: ADD OPTION TO MAKE THIS A TORCH PARAM!!
+        z_logit_mean = (alpha * z_logit) + ((1-alpha) * z_logit_)
+        z_log_mean = self.har.action_layers[1](z_logit_mean)
+
+        y_mean = (alpha * y.data) + ((1-alpha) * y_.data)
+        y_mean = PackedSequence(data=y_mean, batch_sizes=batch_sizes)
+
+        return (y_mean, z_log_mean)
+    
+    def forward_v0_action_feedback_z_arith_mean(self, x):
+        '''
+            in: x -> PackedSeq
+            out: y,z -> (PackedSeq, Tensor)
+        '''
+        depth, batch_sizes = x.data, x.batch_sizes
+        
+        ## pass with conditioning
+        y_ = self.hpe(depth.unsqueeze(1))
+        y_ = PackedSequence(data=y_, batch_sizes=batch_sizes)
+        
+
+        # interim action -- output is log softmax need to perform exp to get it one_hot like... 
+        z_log_ = self.har(y_)
+        z_ = torch.exp(z_log_)
+
+        _, lengths = pad_packed_sequence(x, batch_first=True)
+        z_seq_ = pack_sequence([z_[i].repeat(lengths[i],1) for i in range(lengths.shape[0])]).data
+
+        y = self.hpe_act((depth.unsqueeze(1), z_seq_))
+        y = PackedSequence(data=y, batch_sizes=batch_sizes) # must wrap as packed_seq before sending to har
+        z_log = self.har(y) # note these are logsoftmax numbers, but for argmax operation it doesn't matter
+        z     = torch.exp(z_log)
+
+
+        alpha = self.act_0c_alpha #0.1 #0.0001 # TODO: ADD OPTION TO MAKE THIS A TORCH PARAM!!
+        #z_log_mean = (alpha * z_log) + ((1-alpha) * z_log_)
+
+        z_mean = (alpha*z) + ((1-alpha) * z_)
+        z_log_mean = torch.log(z_mean)
+
+        y_mean = (alpha * y.data) + ((1-alpha) * y_.data)
+        y_mean = PackedSequence(data=y_mean, batch_sizes=batch_sizes)
+
+        return (y_mean, z_log_mean)
+
+
+    
     def forward_v0_action_unrolled_legacy(self, x):
         ### thi is not a valid model only used for testing
         ### x is tuple of two packed sequences

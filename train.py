@@ -130,6 +130,8 @@ if __name__ == '__main__':
                         help='num epochs')
     parser.add_argument('-nl', '--no-log', action='store_true',
                         help='turn off data logging and monitoring')
+    parser.add_argument('-nt', '--no-train', action='store_true',
+                        help='turn off training, only perform validation for one epoch')
     args = parser.parse_args()
 
     if args.config:
@@ -205,5 +207,8 @@ if __name__ == '__main__':
         if 'monitor' in config['trainer']:
             del config['trainer']['monitor'] # disable monitoring
         config['trainer']['tensorboardX'] = False # disable logging
+    if args.no_train:
+        print("[MAIN] Training disabled due to cmd flag")
+        config['trainer']['no_train'] = True
 
     main(config, args.resume)
