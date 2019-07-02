@@ -7,11 +7,7 @@
 >This project investigates the design of a framework to fuse two vastly different deep learning
 architectures in a way that predictions of one output can be used to help predict the other whilst utilising previous estimates to refine future ones.
 The two tasks considered are 3D hand skeleton (pose) estimation using CNNs and
-estimated hand skeleton based egocentric action recognition using RNNs. Multiple
-techniques are proposed, the best of which reduces the raw error gap in action recognition accuracy when using
-predicted hand skeletons versus using ground truth data from 4.3% to just 1%.
-
-
+estimated hand skeleton based egocentric action recognition using RNNs.
 
 ---
 
@@ -25,7 +21,8 @@ of egocentric hand pose estimation and action recognition.<br><br>
 1. This approach is extended using a proposed sequential action feedback connection. This method does not show clear improvements over the baseline and further analysis is performed why this is so.<br><br>
 2. A novel boosting based method is proposed which utilises action
 feedback to provide implicit data augmentation. This method beats both the
-previous method and the baseline. Useful insights on the performance
+previous method and the baseline, reducing the raw error gap in action recognition accuracy when using
+predicted versus ground truth hand skeletons from 4.3% to just 1%. Useful insights on the performance
 of the individual components within this approach are investigated.
  
 
@@ -36,8 +33,9 @@ of the individual components within this approach are investigated.
 | HPE Standalone | 14.49 | - |
 | HAR Standalone <br> (GT Pose*) | - | 72.3 |
 | Baseline (No Train) | 14.49 | 59.0 |
-| Baseline (No Train) | 10.87 | 68.0 |
+| Baseline (Train) | 10.87 | 68.0 |
 | Proposed Method #1 | 10.95 | 68.2 |
+| Proposed Method | 10.72 | 71.0 |
 | Proposed Method #2 <br>(+ Attention) | 10.69 | 71.3 |
 
 
@@ -50,7 +48,7 @@ of the individual components within this approach are investigated.
 
 ---
 
-## Structure
+## Repo Structure
 ### Folder Structure
   ```
   root/
@@ -146,16 +144,16 @@ conda activate jhpear
 Note that an Nvidia CUDA 10.0 compatible GPU is required. If that is not the case then `configs/setup/conda-env-cpu.yaml` can be used instead, however a GPU is highly recommended and is a must for training.
 
 ### Commands
-TBC
 
-<!-- | Model | Command | Notes
-| ----  | --------| ------------ |
-| HPE Standalone | 14.49 | - |
-| HAR Standalone <br> (GT Pose*) | - | - |
-| Baseline (No Train) | 14.49 | - |
-| Baseline (No Train) | 10.87 | - |
-| Proposed Method #1 | 10.95 | - |
-| Proposed Method #2 <br>(+ Attention) | 10.69 | - | -->
+| Model | Command |
+| ----  | --------|
+| HPE Standalone | `python train.py -c configs/hpe/hpe_baseline.yaml` |
+| HAR Standalone <br> (GT Pose*) | `python train.py -c configs/har/har_baseline.yaml` |
+| Baseline (No Train) | `python train.py -c configs/combined/combined_simple_dual_train.yaml -nt` |
+| Baseline (Train) | `python train.py -c configs/combined/combined_simple_dual_train.yaml` |
+| Proposed Method #1 | `python train.py -c configs/combined/combined_feedback_dual_train.yaml` |
+| Proposed Method #2 | `python train.py -c configs/combined/combined_two_hpe_feedback_dual_train.yaml` |
+| Proposed Method #2 <br>(+ Attention) | `python train.py -c configs/combined/combined_two_hpe_feedback_dual_train_atten.yaml` |
 
 
 
@@ -175,7 +173,10 @@ https://github.com/dragonbook/V2V-PoseNet-pytorch
 
 
 
+---
 
+## Visual Results
+TBC
 
 
 
