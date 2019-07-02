@@ -1,5 +1,6 @@
 # dataset 
-datasets/hand_pose_action
+datasets/hand_pose_action/*
+!datasets/hand_pose_action/ADD_FILES_HERE
 
 
 # checkpoint files
@@ -14,3 +15,21 @@ __pycache__/
 
 # saved files
 saved/
+
+
+#csv logs
+logs/CSV
+
+# ipynb checkpoints
+.ipynb_checkpoints/
+
+# temp excel files
+~$*.xlsx
+
+# for now ignore these
+results/plot_data
+results/hpe_cond
+results/hpe_logs
+results/**/logs
+results/**/*.zip
+results/**/visual_pose_depth_action

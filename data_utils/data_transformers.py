@@ -5,6 +5,7 @@ import ctypes
 
 from enum import IntEnum, Enum
 from argparse import Namespace
+from functools import reduce
 
 import cv2
 import torch
@@ -12,9 +13,11 @@ import numpy as np
 
 from .data_augmentors import *
 from datasets import ExtendedDataType as DT, FHADCameraIntrinsics as CAM, \
-                             DepthParameters as DepParam
+                             DepthParameters as DepParam, \
+                             MSRACameraIntrinsics as CAM2
 
 from .debug_plot import plotImg
+from copy import deepcopy
 
 from sklearn.decomposition import PCA
 
@@ -164,12 +167,45 @@ class MM2Pixel(object):
 ## from deep-prior
 class DomainConverter(object):
     def __init__(self, cam_intrinsics):
+        # for use with msra
         self.fx = cam_intrinsics.FX.value
         self.fy = cam_intrinsics.FY.value
         self.ux = cam_intrinsics.UX.value
         self.uy = cam_intrinsics.UY.value
+
+        # for use with fhad
+        self.cam_intr = np.array([[cam_intrinsics.FX.value, 0, cam_intrinsics.UX.value],
+                    [0, cam_intrinsics.FY.value, cam_intrinsics.UY.value], [0, 0, 1]])
+        self.inv_cam_intr = np.linalg.inv(self.cam_intr)
+        
+        #USE_FHAD_CONV = False if cam_intrinsics.__name__ != 'FHADCameraIntrinsics' else True
+
+        ## now only using fhad converters with msra fixed y-val!
+        self.px2mmMulti = self._px2mmMultiFHAD
+        self.px2mm = self._px2mmFHAD
+        self.mm2pxMulti = self._mm2pxMultiFHAD
+        self.mm2px = self._mm2pxFHAD
+        
+        # if USE_FHAD_CONV:
+        #     ### use FHAD converter functions...
+        #     print('[DOMAINCONV] Using FHAD Converters')
+        #     self.px2mmMulti = self._px2mmMultiFHAD
+        #     self.px2mm = self._px2mmFHAD
+        #     self.mm2pxMulti = self._mm2pxMultiFHAD
+        #     self.mm2px = self._mm2pxFHAD
+        # else:
+        #     ## use MSRA cam intrinsics
+        #     print('[DOMAINCONV] Using MSRA Converters')
+        #     self.px2mmMulti = self._px2mmMultiMSRA
+        #     self.px2mm = self._px2mmMSRA
+        #     self.mm2pxMulti = self._mm2pxMultiMSRA
+        #     self.mm2px = self._mm2pxMSRA  
+        # # else:
+        # #     raise NotImplementedError("Type %a of cam_intrinsics have unimplemented converters" % type(cam_intrinsics))
+
+
     
-    def px2mmMulti(self, sample):
+    def _px2mmMultiMSRA(self, sample):
         """
             Converts a collection of pixel indices (w.r.t an image
             with original dimensions (un-cropped)) to a collection of mm values
@@ -183,7 +219,7 @@ class DomainConverter(object):
             ret[i] = self.px2mm(sample[i])
         return ret
 
-    def px2mm(self, sample):
+    def _px2mmMSRA(self, sample):
         """
             Converts pixel indices (w.r.t an image
             with original dimensions (un-cropped)) to mm values
@@ -197,9 +233,8 @@ class DomainConverter(object):
         ret[1] = (self.uy - sample[1]) * sample[2] / self.fy
         ret[2] = sample[2]
         return ret
-    
 
-    def mm2pxMulti(self, sample):
+    def _mm2pxMultiMSRA(self, sample):
         """
             Converts a collection of mm values (w.r.t the original focal point 
             i.e 0mm at focal point) to a collection of indices with px values
@@ -213,7 +248,7 @@ class DomainConverter(object):
             ret[i] = self.mm2px(sample[i])
         return ret
 
-    def mm2px(self, sample):
+    def _mm2pxMSRA(self, sample):
         """
         Denormalize each joint/keypoint from metric 3D to image coordinates
         :param sample: joints in (x,y,z) with x,y and z in mm
@@ -230,6 +265,20 @@ class DomainConverter(object):
         return ret
 
 
+    def _px2mmMultiFHAD(self, sample):
+        return \
+            self.inv_cam_intr\
+                .dot(np.column_stack((sample[:,:2]*sample[:, 2:], sample[:, 2:])).T).T
+    
+    def _px2mmFHAD(self, sample):
+        return self.inv_cam_intr.dot(np.append(sample[:2]*sample[2], sample[2]))
+    
+    def _mm2pxMultiFHAD(self, sample):
+        return np.column_stack(((self.cam_intr.dot(sample.T).T[:, :2] / sample[:, 2:]),
+                              sample[:, 2]))
+    
+    def _mm2pxFHAD(self, sample):
+        return np.append(self.cam_intr.dot(sample)[:2] / sample[2], sample[2])
 
 class TransformerBase(object):
     '''
@@ -241,7 +290,9 @@ class TransformerBase(object):
 
     def __init__(self, num_joints = 21, world_dim = 3, cube_side_mm = 200,
                  cam_intrinsics = CAM, dep_params = DepParam, 
-                 aug_lims=Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180), debug_mode=False):
+                 aug_lims=Namespace(scale_std=0.02, trans_std=5, abs_rot_lim_deg=180), 
+                 crop_depth_ver=0, crop_pad:Tuple[int or float,int or float,float] = (40,40,50.), debug_mode=False,
+                 pca_components=30):
         self.num_joints = num_joints
         self.world_dim = world_dim
 
@@ -257,6 +308,12 @@ class TransformerBase(object):
         #self.dpt_range_mm = dep_params.DPT_RANGE_MM.value #disabled
 
         self.aug_lims = aug_lims
+
+        self.crop_depth_ver = crop_depth_ver
+
+        self.crop_pad = crop_pad
+
+        self.pca_components = pca_components # not really used, but only here to prevent errors and used by metric_init
 
         self.debug_mode = debug_mode
 
@@ -302,6 +359,86 @@ class JointCenterer(TransformerBase):
 
         return sample
 
+class JointSeqBoneNormaliserCenterer(TransformerBase):
+    '''
+        
+        A simple transformer for normalising bone lengtha
+        It is an irreversable transformer once used original bone length info is lost permanently
+
+        Only centering is performed, no standardisation!
+
+    '''
+    def __init__(self, flatten_shape=True, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+        self.links = \
+            [[0,0,0,0,0], [1,2,3,4,5], [6,9,12,15,18], [7,10,13,16,19], [8,11,14,17,20]]
+
+    def __call__(self, sample):
+        
+        #com = sample[DT.COM]
+        #dpt_range = self.crop_shape3D_mm[2]
+        # first center w.r.t com
+        joints_seq = sample[DT.JOINTS_SEQ]#.reshape(-1, self.num_joints, self.world_dim)
+        coms_seq = sample[DT.COM_SEQ]
+        
+        sample[DT.JOINTS_SEQ] = joints_seq - coms_seq[:, np.newaxis, :]
+
+        #print("ORIG SHAPE:", sample[DT.JOINTS_SEQ].shape)
+        tmp_seq = deepcopy(sample[DT.JOINTS_SEQ])
+        output_pose_seq = np.zeros_like(tmp_seq)
+
+        for frame_idx in range(tmp_seq.shape[0]):
+            output_pose = output_pose_seq[frame_idx]
+            tmp = tmp_seq[frame_idx]
+            output_pose[0] = tmp[0]
+
+            for i in range(0, len(self.links) - 1):
+                diff_vec = tmp[self.links[i+1]] - tmp[self.links[i]]
+                diff_vec = (diff_vec / np.linalg.norm(diff_vec, axis=1).reshape(-1,1)) # take diff along 3D vals only
+                output_pose[self.links[i+1]] = output_pose[self.links[i]] + diff_vec
+
+            output_pose_seq[frame_idx] = output_pose
+        sample[DT.JOINTS_SEQ] = output_pose_seq.reshape(-1, self.num_joints*self.world_dim)
+            #return output_pose
+        # only perform aug adjustments if aug actually happened
+        # if DT.AUG_MODE in sample:
+        #     if sample[DT.AUG_MODE] == AugType.AUG_TRANS:
+        #         # add augmentation offset
+        #         com = com + sample[DT.AUG_PARAMS]
+        #     if sample[DT.AUG_MODE] == AugType.AUG_SC:
+        #         # scale dpt_range accordingly
+        #         dpt_range = dpt_range*sample[DT.AUG_PARAMS]
+        
+        ## broadcasting is done automatically here -- centering: CoM is new origin in 3D space
+        #sample[DT.JOINTS] = sample[DT.JOINTS] - sample[DT.COM] #com
+
+        return sample
+
+class SequenceLimiter(TransformerBase):
+    '''
+        Limit number of frames
+    '''
+    def __init__(self, max_length=100, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+        self.max_length = max_length
+
+        #self.max_possible = 0
+
+    def __call__(self, sample):
+        # if sample[DT.DEPTH_SEQ].shape[0] > self.max_possible:
+        #     self.max_possible = sample[DT.DEPTH_SEQ].shape[0]
+        #     print("[LIM]: FOUND MAX SEQ %d" % self.max_possible)
+        if self.max_length < 0:
+            return sample  # bypass
+        else:
+            sample[DT.NAME_SEQ] = sample[DT.NAME_SEQ][:self.max_length]
+            sample[DT.JOINTS_SEQ] = sample[DT.JOINTS_SEQ][:self.max_length]
+            sample[DT.COM_SEQ] = sample[DT.COM_SEQ][:self.max_length]
+            sample[DT.DEPTH_SEQ] = sample[DT.DEPTH_SEQ] \
+                                if sample[DT.DEPTH_SEQ] is None \
+                                else sample[DT.DEPTH_SEQ][:self.max_length]
+            
+            return sample
 
 class JointSeqReshaper(TransformerBase):
     def __init__(self, *args, **kwargs):
@@ -434,17 +571,33 @@ class ActionOneHotEncoder(TransformerBase):
     '''
     def __init__(self, action_classes = 45, *args, **kwargs):
         super().__init__(*args, **kwargs) # initialise the super class
-        self.action_classes = action_classes
+        #self.action_classes = action_classes
+        self.eye = np.eye(action_classes)
 
     def __call__(self, sample):
-        action_idx = sample[DT.ACTION]
-        action_one_hot = np.zeros(self.action_classes)
-        action_one_hot[action_idx] = 1
+        #action_idx = sample[DT.ACTION]
+        #action_one_hot = np.zeros(self.action_classes)
+        #action_one_hot[action_idx] = 1
 
-        sample[DT.ACTION] = action_one_hot
+        sample[DT.ACTION] = self.eye[sample[DT.ACTION]]#action_one_hot
 
         return sample
 
+class ActionSequenceGenerator(TransformerBase):
+    '''
+        A simple transformer for generating a list of vectors where the action index or one-hot vector
+        is expanded to match the timeframe dimension of joints_seq, requires joints seq to be present
+        IF you wish to limit action frames per sequence then add this transformation AFTER sequence limiter  
+        If you wish to use one-hot encoding place this transformer AFTER one-hot encoder
+        In Action_idx / Action_one-hot, joints_seq => Out Action_seq matching outer dim as joints_seq
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+
+    def __call__(self, sample):
+        sample[DT.ACTION_SEQ] = np.asarray([sample[DT.ACTION]]*sample[DT.JOINTS_SEQ].shape[0])
+
+        return sample
 
 
 class DepthCropper(TransformerBase):
@@ -468,6 +621,12 @@ class DepthCropper(TransformerBase):
         self.mm2px_multi = dc.mm2pxMulti #MM2Pixels(cam_intrinsics=self.cam_intrinsics)
         self.mm2px = dc.mm2px#MM2Pixel(cam_intrinsics=self.cam_intrinsics)
         #self.px2mm_multi = Pixels2MM(cam_intrinsics=self.cam_intrinsics)
+
+        if self.crop_depth_ver > 0:
+            print('[DEPTHCROPPER] Using ver.%d depth cropping with %a padding' % (self.crop_depth_ver, self.crop_pad))
+        
+        #assert (self.crop_depth_ver == 0 or self.crop_depth_ver == 2), "Only v0 and v2 cropping is supported"
+
 
     def __call__(self, sample):
         
@@ -493,14 +652,19 @@ class DepthCropper(TransformerBase):
         ## required CoM in px value
         ## convert to 128x128 for network
         ## px_transform_matx for 2D transform of keypoints in px values
+
         dpt_crop, crop_transf_matx = cropDepth2D(
-                                                dpt_orig, com_px_orig,
-                                                fx=self.cam_intrinsics.FX.value,
-                                                fy=self.cam_intrinsics.FY.value,
-                                                crop3D_mm=self.crop_shape3D_mm,
-                                                out2D_px=self.out_sz_px
-                                                )
-        
+            dpt_orig, keypt_px_orig, com_px_orig,
+            keypt_mm_orig, com_mm_orig,
+            fx=self.cam_intrinsics.FX.value,
+            fy=self.cam_intrinsics.FY.value,
+            crop3D_mm=self.crop_shape3D_mm,
+            out2D_px=self.out_sz_px,
+            crop_ver=self.crop_depth_ver,
+            crop_pad=self.crop_pad,
+            mm2px_fn=self.mm2px,
+        )
+
         #if self.debug_mode:
             #plotImg(dpt_orig, dpt_crop, keypt_px_orig, com_px_orig, crop_transf_matx)
             #quit()
@@ -520,17 +684,86 @@ class DepthCropper(TransformerBase):
         ## if augmentation is called
         if dpt_crop is not None: sample[DT.DEPTH] = dpt_crop.astype(np.float32)
         sample[DT.CROP_TRANSF_MATX] = crop_transf_matx
-
+        sample[DT.DEPTH_CROP] = dpt_crop # for debugging in validation samples
+        sample[DT.DEPTH_CROP_AUG] = None # for debugging in validation samples
+        sample[DT.AUG_TRANSF_MATX] = None
+        sample[DT.AUG_MODE] = None
+        sample[DT.AUG_PARAMS] = None
         return sample
 
 
-class DepthSeqCropper(object):
+class DepthSeqCropper(TransformerBase):
     '''
         Apply crop to depth images
         If set in init, also return transform matrices for use with 2D pts
 
         In Depth_(seq) => Out Depth_(seq)_centered_cropped + Transform_Matrix_Crop_Seq
     '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs) # initialise the super class
+        self.depth_cropper = DepthCropper(*args, **kwargs) # for single depth
+        self.return_debug_data = False
+    
+    def __call__(self, sample):
+        ## note everything is in sequences here...
+        ## need to call depth now as well...
+        # dpt_orig = sample[DT.DEPTH_SEQ]
+        # keypt_mm_orig = sample[DT.JOINTS_SEQ]
+        # com_mm_orig = sample[DT.COM_SEQ] 
+
+
+        transformed_gen = (
+            self.depth_cropper({DT.DEPTH: dpt, DT.JOINTS: keypt, DT.COM: com}) \
+            #{DT.DEPTH: dpt, DT.JOINTS: keypt, DT.COM: com} \
+                for (dpt, keypt, com) in zip(sample[DT.DEPTH_SEQ], sample[DT.JOINTS_SEQ], sample[DT.COM_SEQ])
+        )
+        
+        zipped = zip(*((cdict[DT.DEPTH], cdict[DT.JOINTS], cdict[DT.COM],
+                        cdict[DT.DEPTH_CROP], cdict[DT.JOINTS_ORIG_PX],
+                        cdict[DT.COM_ORIG_PX], cdict[DT.CROP_TRANSF_MATX],
+                        cdict[DT.DEPTH_ORIG], cdict[DT.COM_ORIG_MM]) for cdict in transformed_gen)) \
+                            if self.return_debug_data else \
+                                zip(*((cdict[DT.DEPTH], cdict[DT.JOINTS], cdict[DT.COM]) for cdict in transformed_gen))
+
+        sample[DT.DEPTH_SEQ] = np.stack(next(zipped))
+        sample[DT.JOINTS_SEQ] = np.stack(next(zipped)) # should be unchanged
+        sample[DT.COM_SEQ] = np.stack(next(zipped)) # should be unchanged
+        
+        
+        sample[DT.DEPTH_CROP_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.JOINTS_ORIG_PX_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.COM_ORIG_PX_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.CROP_TRANSF_MATX_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.DEPTH_ORIG_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+        sample[DT.COM_ORIG_MM_SEQ] = np.stack(next(zipped)) if self.return_debug_data else None
+
+        #print("T2: %fs" % (10e-9*(time.time_ns() - t)))
+        return sample
+
+
+        ### old code // slower!
+        #reduce(lambda dic, cdic: {'a': dic['a'] + [cdic['a']]}, l, {'a': []})
+
+        # list of dicts -> dict of lists
+        # curr_dict -> new item, acc_dict -> accumulator
+        #t = time.time_ns()
+        #init_dict = { key: [] for key in transformed_list[0].keys() }
+        #init_dict = { DT.DEPTH: [], DT.JOINTS: [], DT.COM: [] }
+        # transformed_dict = \
+        #     reduce(lambda acc_dict, curr_dict: {\
+        #             DT.DEPTH: acc_dict[DT.DEPTH] + [curr_dict[DT.DEPTH]],
+        #             DT.JOINTS: acc_dict[DT.JOINTS] + [curr_dict[DT.JOINTS]], 
+        #             DT.COM: acc_dict[DT.COM] + [curr_dict[DT.COM]],
+        #             },
+        #            transformed_list, init_dict)
+            # reduce(lambda acc_dict, curr_dict: {key: acc_dict[key] + [curr_dict[key]] for key in acc_dict.keys()},
+            #        transformed_list, init_dict)
+        
+        # np.stack(transformed_dict[DT.DEPTH])
+        # np.stack(transformed_dict[DT.JOINTS])
+        # np.stack(transformed_dict[DT.COM])
+
+        #quit()
 
 
 class DepthAndJointsAugmenter(TransformerBase):
@@ -635,90 +868,7 @@ class DepthAndJointsAugmenter(TransformerBase):
 
         return sample
 
-class JointsAugmenter(TransformerBase):
-    '''
-        Perform Augmenting for keypoints ONLY
 
-        For Future use see how its implemented not so important atm 
-        Only mainly useful for HPE maybe this should only be for HPE
-
-        In:
-        keypt_px_orig
-        com_px_orig
-
-        Out:
-        keypt_px_orig_aug
-        com_px_orig_aug
-
-    '''
-    def __init__(self, scale_std=0.02, trans_std=5, abs_rot_lim_deg=180,
-                 aug_mode_lst = [AugType.AUG_NONE], **kwargs):
-        super().__init__(**kwargs)
-        self.fx = self.cam_intrinsics.FX.value
-        self.fy = self.cam_intrinsics.FY.value
-
-        dc = DomainConverter(cam_intrinsics=self.cam_intrinsics)
-
-        self.mm2px_multi = dc.mm2pxMulti#MM2Pixels(cam_intrinsics=self.cam_intrinsics)
-        self.mm2px = dc.mm2px#MM2Pixel(cam_intrinsics=self.cam_intrinsics)
-
-        self.px2mm_multi = dc.px2mmMulti#Pixels2MM(cam_intrinsics=self.cam_intrinsics)
-        self.px2mm = dc.px2mm#Pixel2MM(cam_intrinsics=self.cam_intrinsics)
-
-        self.rot_lim = abs_rot_lim_deg if abs_rot_lim_deg <=180 else 180
-        self.sc_std = scale_std if scale_std <= 0.02 else 0.02
-        self.tr_std = trans_std if trans_std <= 5 else 5
-        self.aug_mode_lst = aug_mode_lst
-
-        # temporary TODO: change this to how its done originally basically
-        # project x,y keypoitn to image cords and draw 40px bounding box enclosing
-        # image
-        self.crop_vol_mm = self.crop_shape3D_mm
-    
-
-    def __call__(self, sample):
-        com_px_orig = sample[DT.COM_ORIG_PX]
-        keypt_px_orig = sample[DT.JOINTS_ORIG_PX]
-        
-        ## extra datatypes
-        com_mm_orig = sample[DT.COM_ORIG_MM]
-        keypt_mm_orig = sample[DT.JOINTS_ORIG_MM]
-
-        _, crop_transf_matx = cropDepth2D(
-                                            None, com_px_orig,
-                                            fx=self.fx, fy=self.fy,
-                                            crop3D_mm=self.crop_vol_mm,
-                                            out2D_px=self.out_sz_px
-                                        )
-        
-        
-        aug_mode, aug_param = getAugModeParam(self.aug_mode_lst, self.rot_lim, 
-                                                self.sc_std, self.tr_std)
-        
-        (_, keypt_px_orig_aug, com_px_orig_aug, _) = \
-            rotateHand2D(None, keypt_px_orig, com_px_orig, aug_param) \
-            if aug_mode == AugType.AUG_ROT \
-            else translateHand2D(None, keypt_px_orig, com_px_orig, com_mm_orig, aug_param, 
-                                    self.fx, self.fy, crop_transf_matx, self.mm2px, self.crop_vol_mm) \
-            if aug_mode == AugType.AUG_TRANS \
-            else scaleHand2D(None, keypt_px_orig, com_px_orig, com_mm_orig, aug_param, 
-                                    self.fx, self.fy, crop_transf_matx,
-                                    self.mm2px, crop3D_mm=self.crop_vol_mm) \
-            if aug_mode == AugType.AUG_SC \
-            else (None, keypt_px_orig, com_px_orig, np.eye(3, dtype=np.float32))
-
-        ## the'centering part' is now done by another transform
-        #keypt_mm_crop_aug = self.px2mm_multi(keypt_px_orig_aug) - self.px2mm_multi(com_px_orig_aug)
-
-
-        # store mm_orig_aug as default value, now only standardisation is needed
-        sample[DT.JOINTS] = self.px2mm_multi(keypt_px_orig_aug) # keypt_mm_orig_aug
-        sample[DT.COM] = self.px2mm(com_px_orig_aug) # com_mm_orig_aug
-        sample[DT.AUG_MODE] = aug_mode
-        sample[DT.AUG_PARAMS] = aug_param
-
-        return sample
-        
 
 class DepthStandardiser(TransformerBase):
     '''
@@ -762,6 +912,32 @@ class DepthStandardiser(TransformerBase):
           
         return sample
 
+class DepthSeqStandardiser(TransformerBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+
+    def __call__(self, sample):
+        dpt_range = self.crop_shape3D_mm[2]
+        
+        # slower method
+        # import time
+        # dpts=sample[DT.DEPTH_SEQ].copy()
+        # comzs=sample[DT.COM_SEQ].copy()[:, 2]
+        # t = time.time_ns()
+        # newcomzs = (comzs + (dpt_range / 2.)) # select z axis value only
+        # for i in range(dpts.shape[0]):
+        #     dpts[i][(dpts == 0)[i]] = newcomzs[i]
+        # dpts -= comzs[:, np.newaxis, np.newaxis]
+        # dpts /= (comzs[:, np.newaxis, np.newaxis] / 2.)
+        # print("T1: %fs" % (10e-9*(time.time_ns() - t)))
+        
+        #t = time.time_ns()
+        sample[DT.DEPTH_SEQ] = \
+            np.stack(standardiseImg(dpt, com_z[2], dpt_range) \
+                for (dpt, com_z) in zip(sample[DT.DEPTH_SEQ], sample[DT.COM_SEQ]))
+        #print("T2: %fs" % (10e-9*(time.time_ns() - t)))
+        return sample
 
 class PCATransformer(TransformerBase):
     '''
@@ -790,7 +966,9 @@ class PCATransformer(TransformerBase):
 
         self.device = torch.device('cpu')   # this is needed so keep as in
         self.dtype = dtype
-        self.out_dim = n_components
+        self.out_dim = n_components # kept here for compatibility NOTE if you change here change globally as well!
+
+        #assert self.out_dim == self.pca_components, "Possible pca component dim mismatch!"
 
         self.use_cache = use_cache
         self.overwrite_cache = overwrite_cache
@@ -798,6 +976,7 @@ class PCATransformer(TransformerBase):
 
         if self.use_cache and not self.overwrite_cache:
             self._load_cache()
+        
                 
                 
                     
@@ -816,6 +995,23 @@ class PCATransformer(TransformerBase):
         # note our matrix is U.T
         # though y_data is 1D array matmul automatically handles that and reshape y to col vector
         sample[DT.JOINTS] = np.matmul(self.transform_matrix_np, (sample[DT.JOINTS] - self.mean_vect_np))
+
+        return sample
+
+    def undo(self, sample):
+        '''
+            later make this a dictionary
+            single y_data sample is 1D
+        '''
+        if self.transform_matrix_np is None:
+            raise RuntimeError("Please call fit first before calling transform.")
+        
+        #y_data = sample[1]
+        
+        # automatically do broadcasting if needed, but in this case we will only have 1 sample
+        # note our matrix is U.T
+        # though y_data is 1D array matmul automatically handles that and reshape y to col vector
+        sample[DT.JOINTS] = np.matmul(self.transform_matrix_np.T, sample[DT.JOINTS]) + self.mean_vect_np
 
         return sample
     
@@ -842,10 +1038,10 @@ class PCATransformer(TransformerBase):
 
             self.transform_matrix_np = shared_array
             self.mean_vect_np = shared_array2
-            print("Info: PCA loaded from cachefile %s." % cache_file)
+            print("[PCA_TRANSFORMER] Info: PCA loaded from cachefile %s." % cache_file)
         else:
             # handles both no file and no cache dir
-            Warning("PCA cache file not found, a new one will be created after PCA calc.")
+            Warning("[PCA_TRANSFORMER] PCA cache file not found, a new one will be created after PCA calc.")
             self.overwrite_cache = True # to ensure new pca matx is saved after calc
     
     def _save_cache(self):
@@ -925,6 +1121,34 @@ class PCATransformer(TransformerBase):
         return np.matmul(self.fit(X, return_X_no_mean=True).numpy(), self.transform_matrix_np.T)
 
 
+class PCASeqTransformer(PCATransformer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    # all other methods directly use base methods
+    
+    def __call__(self, sample):
+        #sample[DT.JOINTS]
+        sample[DT.JOINTS_SEQ] = \
+            np.stack(super(PCASeqTransformer, self).__call__({DT.JOINTS: joints})[DT.JOINTS] for joints in sample[DT.JOINTS_SEQ])
+        # this will be extended  by child
+        # basically we need to call some sort of np.stack but maybe it can be done in a better way?
+        return sample
+
+class PCAUndoSeqTransformer(PCATransformer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    # all other methods directly use base methods
+    
+    def __call__(self, sample):
+        #sample[DT.JOINTS]
+        sample[DT.JOINTS_SEQ] = \
+            np.stack(super(PCAUndoSeqTransformer, self).undo({DT.JOINTS: joints})[DT.JOINTS] for joints in sample[DT.JOINTS_SEQ])
+        # this will be extended  by child
+        # basically we need to call some sort of np.stack but maybe it can be done in a better way?
+        return sample
+
 class ToTuple(object):
     '''
         Final transformer to convert dictionary to tuple
@@ -945,11 +1169,17 @@ class ToTuple(object):
         JOINTS_ACTION_SEQ = 'joints_action_seq'
         DEPTH_JOINTS_SEQ = 'depth_joints_seq'
         DEPTH_JOINTS_ACTION_SEQ = 'depth_joints_action_seq'
+        DEPTH_JOINTS_JOINTS_ACTION_SEQ = 'depth_joints_joints_action_seq'
+        DEPTH_ACTION_JOINTS_ACTION_SEQ = 'depth_action_joints_action_seq'
+        DEPTH_ACTIONSEQ_JOINTS_ACTION_SEQ = 'depth_actionseq_joints_action_seq'
+        DEPTH_ACTIONSEQ_JOINTS_JOINTS_ACTION_SEQ = 'depth_actionseq_joints_joints_action_seq'
         JOINTS = 'joints'
         JOINTS_ACTION = 'joints_action'
         DEPTH_JOINTS = 'depth_joints'
         DEPTH_JOINTS_ACTION = 'depth_joints_action'
+        DEPTH_ACTION_JOINTS = 'depth_action_joints'
         DEPTH_JOINTS_DEBUG = 'depth_joints_debug'
+        DEPTH_JOINTS_SEQ_DEBUG = 'depth_joints_seq_debug'
 
 
     def __init__(self, extract_type = 'joints_action_seq'):
@@ -976,6 +1206,14 @@ class ToTuple(object):
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_SEQ) \
             else (sample[DT.DEPTH_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_ACTION_SEQ) \
+            else (sample[DT.DEPTH_SEQ], sample[DT.JOINTS_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_JOINTS_ACTION_SEQ) \
+            else (sample[DT.DEPTH_SEQ], sample[DT.ACTION], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_ACTION_JOINTS_ACTION_SEQ) \
+            else (sample[DT.DEPTH_SEQ], sample[DT.ACTION_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_ACTIONSEQ_JOINTS_ACTION_SEQ) \
+            else (sample[DT.DEPTH_SEQ], sample[DT.ACTION_SEQ], sample[DT.JOINTS_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_ACTIONSEQ_JOINTS_JOINTS_ACTION_SEQ) \
             else (sample[DT.JOINTS]) \
                 if (self.extract_type == ToTuple.ET.JOINTS) \
             else (sample[DT.JOINTS], sample[DT.ACTION]) \
@@ -985,10 +1223,21 @@ class ToTuple(object):
             else (sample[DT.DEPTH_ORIG], sample[DT.DEPTH_CROP], sample[DT.JOINTS_ORIG_PX], \
                   sample[DT.COM_ORIG_PX], sample[DT.CROP_TRANSF_MATX], \
                   None, sample[DT.DEPTH_CROP_AUG], sample[DT.AUG_TRANSF_MATX], \
-                  sample[DT.AUG_MODE], sample[DT.AUG_PARAMS]) \
+                  sample[DT.AUG_MODE], sample[DT.AUG_PARAMS], sample[DT.NAME], \
+                  sample[DT.COM_ORIG_MM], \
+                  (sample[DT.DEPTH], sample[DT.ACTION]), sample[DT.JOINTS]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_DEBUG) \
+            else (sample[DT.DEPTH_ORIG_SEQ], sample[DT.DEPTH_CROP_SEQ], sample[DT.JOINTS_ORIG_PX_SEQ], \
+                  sample[DT.COM_ORIG_PX_SEQ], sample[DT.CROP_TRANSF_MATX_SEQ], \
+                  None, None, None, \
+                  None, None, sample[DT.NAME_SEQ], \
+                  sample[DT.COM_ORIG_MM_SEQ], \
+                  (sample[DT.DEPTH_SEQ], sample[DT.ACTION_SEQ], sample[DT.JOINTS_SEQ], sample[DT.JOINTS_SEQ], sample[DT.ACTION])) \
+                if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_SEQ_DEBUG) \
             else (sample[DT.DEPTH], sample[DT.JOINTS], sample[DT.ACTION]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_JOINTS_ACTION) \
+            else (sample[DT.DEPTH], sample[DT.ACTION], sample[DT.JOINTS]) \
+                if (self.extract_type == ToTuple.ET.DEPTH_ACTION_JOINTS) \
             else (sample[DT.DEPTH], sample[DT.JOINTS_ORIG_MM], sample[DT.COM_ORIG_MM]) \
                 if (self.extract_type == ToTuple.ET.DEPTH_ORIG_JOINTS_ORIG_COM) \
             else None

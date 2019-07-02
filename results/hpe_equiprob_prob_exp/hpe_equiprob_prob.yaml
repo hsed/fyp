@@ -1,0 +1,26 @@
+# all paths are relative to root folder!
+# $> python results\plot_learn_curve.py -c results\data.yaml
+
+### exploding effects unstable only certaina mounts of action can be used ###
+model_name: HPE 
+title: "HPE Equiprobability Input Versus GT Action Conditioning Experiments"
+scalar_tag: avg_3d_err_mm 
+axis_title: "Avg 3D Error" # this will be Prepended with Train/Valid
+max_epochs: 30
+runs:
+  - "0608_1705" # resent
+  - "0608_2241" # lin++ + res
+  - "0608_1801" # lin
+  - "0608_1852" # lin+res
+  - "0608_1952" # lin++
+run_tags:
+  - "p=1.0"
+  - "p=0.95"
+  - "p=0.9" # v6 with embedding
+  - "p=0.8" # Use linear++
+  - "p=0.6" # Res+Lin
+
+legend_loc: 2
+base_path: results/hpe_equiprob_prob_exp/logs
+save_path: results/plot_pdfs/hpe_equiprob_prob_learn_curves.pdf
+x_ticks: 7 # good number for 30 epochs

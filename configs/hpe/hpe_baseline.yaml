@@ -1,0 +1,76 @@
+name: BaselineHPE
+n_gpu: 1
+dtype: float
+target_dtype: float
+arch:
+  type: DeepPriorPPModel
+  args:
+    input_channels: 1
+    action_cond_ver: 0
+    dynamic_cond: false
+    pca_components: 30
+    dropout_prob: 0.3
+    train_mode: true
+    init_w: true
+    predict_action: false
+    res_blocks_per_group: 5
+    eval_pca_space: false
+    train_pca_space: true
+data_loader:
+  type: DepthJointsDataLoader
+  args:
+    data_dir: datasets/hand_pose_action
+    dataset_type: train
+    batch_size: 128
+    pca_components: 30
+    use_pca_cache: true
+    use_wrist_com: false
+    eval_pca_space: false
+    train_pca_space: true
+    num_workers: 8
+    debug: false
+    reduce: false
+    preload_depth: false
+    pca_overwrite_cache: false
+    use_msra: false
+    pca_size: 200000
+    validation_split: -1.0
+    shuffle: false
+    randomise_params: false
+    crop_depth_ver: 2
+    crop_pad_2d:
+    - 40
+    - 40
+    - 100.0
+    crop_pad_3d:
+    - 30.0
+    - 30.0
+    - 100.0
+    cube_side_mm: 200
+    data_aug:
+    - 0
+    pca_data_aug:
+    - 0
+    use_orig_transformers: false
+    use_orig_transformers_pca: false
+    output_type: depth_action_joints
+optimizer:
+  type: Adam
+  args:
+    lr: 0.001
+    weight_decay: 0
+    amsgrad: false
+loss: mse_loss
+metrics:
+- Avg3DError
+lr_scheduler: null
+trainer:
+  epochs: 100
+  save_dir: saved/
+  save_period: 500
+  verbosity: 2
+  persistent_storage: true
+  monitor: min val_avg_3d_err_mm
+  early_stop: 30
+  tensorboardX: true
+  log_dir: logs

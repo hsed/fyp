@@ -18,6 +18,7 @@ class BaseDataType(IntEnum):
     JOINTS_SEQ = 6
     COM_SEQ = 7
     NAME_SEQ = 8
+    ACTION_SEQ = 9
 
 @unique 
 class TransformDataType(IntEnum):
@@ -27,6 +28,12 @@ class TransformDataType(IntEnum):
 
         all these datatypes grow backwards
     '''
+    COM_ORIG_MM_SEQ = -17
+    DEPTH_ORIG_SEQ = -16
+    CROP_TRANSF_MATX_SEQ = -15
+    COM_ORIG_PX_SEQ = -14
+    JOINTS_ORIG_PX_SEQ = -13
+    DEPTH_CROP_SEQ = -12
     DEPTH_CROP_AUG = -11 # final result but without standardisation
     DEPTH_CROP = -10
     AUG_PARAMS = -9

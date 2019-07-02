@@ -1,0 +1,75 @@
+name: BaselineCombined
+n_gpu: 1
+dtype: float
+arch:
+  type: CombinedModel
+  args:
+    hpe_checkpoint: saved/BaselineHPE/0608_0803/model_best.pth
+    har_checkpoint: saved/BaselineLSTM/0531_0551/model_best.pth
+    pca_checkpoint: null
+    hpe_args:
+      input_channels: 1
+      action_cond_ver: 0
+      dynamic_cond: false
+      pca_components: 30
+      dropout_prob: 0.3
+      train_mode: true
+      init_w: true
+      predict_action: false
+      res_blocks_per_group: 5
+      eval_pca_space: false
+      train_pca_space: false
+      fixed_pca: true
+    har_args:
+      in_frame_dim: 64
+      num_hidden_layers: 1
+      use_unrolled_lstm: false
+    forward_type: 0
+    combined_version: 2a
+    ensure_batchnorm_fixed_eval: false
+    ensure_dropout_fixed_eval: true
+data_loader:
+  type: CombinedDataLoader
+  args:
+    data_dir: datasets/hand_pose_action
+    dataset_type: train
+    batch_size: 16
+    shuffle: true
+    validation_split: -0.2
+    num_workers: 8
+    pad_sequence: false
+    max_pad_length: 120
+    randomise_params: false
+    use_pca: false
+    debug: false
+    forward_type: 0
+    use_wrist_com: false
+optimizer:
+  type: Adam
+  args:
+    lr: 0.00003 #0.003
+    weight_decay: 1.0e-5
+    amsgrad: true
+loss:
+    type: CombinedSeqLoss
+    args:
+      alpha: 0.002 #0.0002 #0.00002 # 0.002 #0.0002
+      loss_type: 'mse_and_nll'
+metrics:
+- top1_acc
+- top3_acc
+- Avg3DError
+- mse_only_seq
+- nll_only_seq
+trainer:
+  epochs: 5
+  save_dir: saved/
+  save_period: 500
+  verbosity: 2
+  persistent_storage: false
+  # monitor: max val_top1_acc
+  early_stop: 10
+  tensorboardX: true
+  only_save: false
+  no_train: false
+  log_dir: logs

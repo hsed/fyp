@@ -266,7 +266,7 @@ class MSRAHandDataset(Dataset):
                         splitted = lines[i].split()
                         for jid in range(self.joint_num):
                             self.joints_world[frame_id, jid, 0] = float(splitted[jid * self.world_dim])
-                            self.joints_world[frame_id, jid, 1] = float(splitted[jid * self.world_dim + 1])
+                            self.joints_world[frame_id, jid, 1] = -float(splitted[jid * self.world_dim + 1]) # NOTE: to be consistent with FHAD matx based domain conversions this value must be negated, everything else remains as is, no impact on performance (but we must not use the older converters!)
                             self.joints_world[frame_id, jid, 2] = -float(splitted[jid * self.world_dim + 2])    ## ATTENTION: NOTE THE NEGATION THUS THIS IS SAME AS DEEP-PRIOR
                         
                         

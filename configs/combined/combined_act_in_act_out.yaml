@@ -1,0 +1,115 @@
+# Purpose and scopes of model:
+
+# 0) use packed sequence always
+# 1) Train on GT Keypoints (or PCA Embeddings of GT Keypoints) and GT Action. do this is a loop fashion using
+# packed. check if this is same as baseline.
+# 2) Train on GT Keypoints (or PCA Embeddings of GT Keypoints) and GT Action.
+# Test on predicted keypoints (or pca embeddings of predicted keypoints) using a mapping from a pre-train HPE
+# and then pass these to current trained model to predict action. this is pretrained method should show improvements to (3)
+# 3) Train on GT Depthmaps to low-dim embeddings (30) or same size as keypoints (63) and then followed by lstm try both
+# embedding cases, no keypoint signal or side-information, this should be worse than 2 on action accuracy
+# 3) Try simple extension of 2 which uses pre-trained model followed by end-to-end training of fewer layers no feedback information
+# 4) Allows from feedback of depth images.
+
+# To use test on pre-train hpe and har set num epochs to 0 and presave to true...
+
+# forward_type in data loader
+# forward_type in model
+# Avg3DError model
+
+# HPE
+# 0525_0129 no cond 100 ep
+# 0528_0756 equiprob cond 100 ep
+# 0529_0026 new best action cond 100 ep (linear++ layers)
+
+# HAR
+# 0531_0551 (or 0528_1657) -- new best 0.7234?? check again
+# 0525_1627 -- older best
+# 0531_0558 -- very slightly better @ 0.466 // 0.7443 but more seq of 120
+
+### for action %equiprob testing use 30 epoch models except HAR model!!
+### 0608_1145 -- no cond 30ep
+### 0608_0047/model_best.ep30.pth -- equiprob 30 epoch
+
+### 0608_1200
+### 0609_0145
+
+name: BaselineCombined # for use with tensorboard
+n_gpu: 1
+dtype: float
+arch:
+  type: CombinedModel
+  args:
+    hpe_checkpoint: 'saved/BaselineHPE/0608_0803/model_best.pth' #0527_1455/model_best.pth' #0525_0129 0527_1756  0527_1455 0525_0129 #'saved/BaselineHPE/0509_1106/model_best.pth' #'saved/BaselineHPE/0515_1848/model_best.pth'
+    hpe_act_checkpoint: 'saved/BaselineHPE/0609_0145/model_best.pth' #0608_1050 0527_1508/model_best.pth #0528_0756 0527_1508#0515_1848/model_best_fixed.pth
+    har_checkpoint: 'saved/BaselineLSTM/0531_0551/model_best.pth' #saved/BaselineLSTM/0528_1657/model_best.pth #0525_1627 #0525_1026 'saved/BaselineLSTM/0521_1300/model_best.pth' #1346 # this is the manual loop (unrolled) version; for rolled/compact version use 1346 (padding better) or 1300 (no padding)
+    pca_checkpoint:
+    hpe_args:
+      input_channels: 1
+      action_cond_ver: 0 #6 #0 # use 0 or 6 => no action cond, 6 => best action cond using film 
+      hpe_act_action_cond_ver: 7.181 #181 #7.15 #6 #7 #6 #0 CHANGE THIS TO TEST FOR ACTION
+      dynamic_cond: false # true -> turn off after X epochs
+      pca_components: 30
+      dropout_prob: 0.3
+      train_mode: true
+      init_w: true
+      predict_action: false #true ## new
+      res_blocks_per_group: 5 # 5 -- orig
+      eval_pca_space: false
+      train_pca_space: false
+      fixed_pca: true # pca weights are untrainable
+      action_equiprob_chance: 0.95 #1.0 #0.0 #0.35 #0.8 #0.9 #99 999 #5 #1.0 ## experiment on this!!
+    har_args:
+      in_frame_dim: 64 #30 # 63 # use 30 if using pca!
+      num_hidden_layers: 1
+      use_unrolled_lstm: false #true #false #true # true # true: about 14x slower
+    forward_type: 0 #0 #3 # 0: Combined (? -> (KeyPts, Action)); 1: HPE ((Depth,[Action]) -> KeyPts); 2: HAR (Depth -> Action); 3: HAR (KeyPts -> Action)
+    combined_version: '11d' #'0c' #'0b' # used with forward_type == 0 ;; for GT ACTION USE 0a
+    act_0c_alpha: 1.0 #0.5 #0.8 #0.1 # 0.2 #0.5 #0.5 #0.0 #1.0 #0.5 #0.0001 #0.5 #0.1 #new// temp
+data_loader:
+  type: CombinedDataLoader
+  args:
+    data_dir: datasets/hand_pose_action
+    dataset_type: train
+    batch_size: 16 # 16 is final bs #4 #8 #1 #4
+    shuffle: true
+    validation_split: -1.0 #-0.2 # -1.0 -- use this for full test set training # need to change this to -1.0 to test properly in future!
+    num_workers: 8
+    pad_sequence: false #true #false # set to false to make it easier for loss to be applied element-wise
+    max_pad_length: 120 #300 #120 #300 #-1 #100 #-1 #100
+    randomise_params: false
+    use_pca: false #false #true # false # false => eval_pca_space & train_pca_space => false , similarly for true
+    debug: false
+    forward_type: 0 #3 #0 # 3
+    use_wrist_com: false # test this and set to true also set crop to ver 4 or 5!!
+    gen_action_seq: false
+optimizer:
+  type: Adam
+  args:
+    lr: 0.003
+    weight_decay: 0
+    amsgrad: true # note true is good for lstm but bad for hpe
+loss: mse_seq_and_nll_loss #nll_loss
+metrics:
+- top1_acc
+- top3_acc
+- Avg3DError # ONLY USE THIS IF FORWARD TYPE IS 0 FOR EVERYTHING ELSE REMOVE
+- mse_only_seq
+- nll_only_seq
+# lr_scheduler:
+#   type: StepLR
+#   args:
+#     step_size: 50
+#     gamma: 0.1
+trainer:
+  epochs: 30 # 100 -- use this when val split == -1.0
+  save_dir: saved/
+  save_period: 500
+  verbosity: 2
+  persistent_storage: false #true #false #true # false # this is very helpful when also loading depth images
+  #monitor: max val_top1_acc
+  early_stop: 20 # 30 -- use this when val split == -1.0 #
+  tensorboardX: false #true
+  only_save: false #true #false #true #false # true, only do this for when saving the trivial baseline and quit() must quit cause optimiser is at weird state
+  no_train: true # only validate do not train...
+  log_dir: logs

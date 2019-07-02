@@ -1,0 +1,99 @@
+# note at this current stage it is left at testing msra dataset with rot+none aug for both train and pca
+# better use fp (--force-pca) flag also the very next thing to do is try replacing new augmentation transforms or basically
+# all transforms with original transforms you made for msra.... and do rot+None and see if results are better...
+
+# predict_action: true
+# output_type: depth_joints_action
+# loss: mse_and_nll_loss
+# output_type: depth_action_joints
+
+# action_cond: use 6 for final conditioning using one_hot class info and film layers; use 0 for no action.
+
+## make default eval_pca_space_false for both train and test if this is an ok result...
+
+name: BaselineHPE
+n_gpu: 1
+dtype: float
+
+
+arch:
+  type: DeepPriorPPModel
+  args:
+    input_channels: 1
+    action_cond_ver: 7.17 #0 #6 # use 0 or 6 #5 #3 #2 # 0 => no action cond, 1 => simple broadcast+concat (input_channel = 2), #2 -> embed method with broadcast to x channels #3 -> nn.Linear method and onehot with broadcast to x channels 
+    dynamic_cond: false # true -> turn off after X epochs
+    pca_components: 30
+    dropout_prob: 0.3
+    train_mode: true
+    init_w: true
+    predict_action: false #true ## new
+    res_blocks_per_group: 5 #6 # 5 -- orig
+    eval_pca_space: false #false # by default its true; (true -> 30dim out, false -> 63dim out) during validation only, for train always 30dim out
+    train_pca_space: true # true this helps in combined error by large margin 0.38% acc vs 0.43% acc for trivial baseline.
+
+data_loader:
+  type: DepthJointsDataLoader
+  args:
+    data_dir: datasets/hand_pose_action
+    dataset_type: train
+    batch_size: 128
+    pca_components: 30
+    use_pca_cache: true
+    use_wrist_com: false #false #true
+    eval_pca_space: false #false # note this must match model's settings if found different may give rise to error
+    train_pca_space: true #false #true
+    num_workers: 8
+    debug: false
+    reduce: false
+    preload_depth: false #true now this is not neede, after first epoch preloading is automatically done
+    pca_overwrite_cache: false #true #true # set to false when u r not changing data aug everytime
+    use_msra: false #true #false #true #false
+    pca_size: 200000
+    validation_split: -1.0 #-0.2 #-1.0 #-0.2 # -1.0 #0.2 #-1.0 #0.2 #-1.0
+    shuffle: false # !!! this can only be used if val split <= 0, but must be used if val_split === 0! new: for val_split < 0 its fixed now , if >0 then the shuffling is handled by randomsampler
+    randomise_params: false #false # true <false> ensures even after augmentation exactly same data is loaded every epoch!
+    crop_depth_ver: 2 #4 #2 #1 #2 #3 #1 #3 #1 #2 #0 #0 #2 #2 #0 # 1, 2, 3 ; '2' best, '3' almos same as '2'
+    crop_pad_2d: [40, 40, 100.] # FOR 2D CROPPING [PX, PX, MM] # meth 2, 3
+    crop_pad_3d: [30., 30., 100.] #[30., 30., 50.] # [30., 30., 100.] # FOR 3D CROPPING [MM, MM, MM] # meth 1
+    cube_side_mm: 200 #400 #200 #190 # use 210 for fhad, 190 (best) for msra
+    data_aug: # None: 0, Rot: 1; Sc: 2; Trans: 3;
+      - 0
+      #- 1 #3 #1
+      #s- 2
+      #- 3
+    pca_data_aug:
+      - 0
+      #- 1 #3 #1
+      #- 3
+      #- 2
+      #- 3
+    use_orig_transformers: false #true #false #true # true
+    use_orig_transformers_pca: false #true #false #true # true
+    output_type: depth_action_joints #depth_joints # 'depth_action_joints' 'depth_joints_action' #'depth_joints'
+
+
+optimizer:
+  type: Adam
+  args:
+    lr: 0.001
+    weight_decay: 0
+    amsgrad: false #true
+loss: mse_loss # mse_and_nll_loss #mse_loss
+metrics: [Avg3DError]
+lr_scheduler:
+  # type: StepLR
+  # args:
+  #   step_size: 50
+  #   gamma: 0.1
+
+
+trainer:
+  epochs: 100 #30 #80 #30 #100 #20 #10 #10 #20 #5 #15 #50 # 10 #50
+  save_dir: saved/
+  save_period: 500 #5 #10 #2 #10 # keep it big to avoid space, issue we can just save best weights
+  verbosity: 2
+  persistent_storage: true # false
+  monitor: "min val_avg_3d_err_mm" #"min val_loss" for best weights and early stopping
+  early_stop: 40 #30 #20 #10 #5 #20 #10 #20
+  tensorboardX: true
+  log_dir: logs #saved/logs

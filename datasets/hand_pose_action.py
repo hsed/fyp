@@ -3,6 +3,7 @@ import sys
 import struct
 import time
 from enum import IntEnum
+from typing import List, Any, Callable
 
 #import cv2 # no longer using this
 import h5py
@@ -11,11 +12,12 @@ from PIL import Image
 from tqdm import tqdm
 from torch.utils.data import Dataset
 
+
 from .base_data_types import ExtendedDataType as DT, \
                              BaseDatasetType as DatasetMode, \
                              BaseTaskType as TaskMode
 
-#### TO HEAVILY EDIT TO SUPPORT HAND ACTION DATASET
+
 ## starting from 0, each component of y_gt_mm_keypoints is
 # --0(wrist)
 # --1(thumb_mcp), 2(index_mcp), 3(middle_mcp), 4(ring_mcp), 5(pinky_mcp)
@@ -27,31 +29,6 @@ from .base_data_types import ExtendedDataType as DT, \
 # total 21 joints, each having 3D co-ords
 
 # COM, currently MCP --> 3*world_dim: 3*world_dim+3
-
-
-# def load_depthmap(filename, img_width, img_height, max_depth):
-#     '''
-#         Given a bin file for one sample e.g. 000000_depth.bin
-#         Load the depthmap
-#         Load the gt bounding box countaining sample hand
-#         Clean the image by:
-#             - setting depth_values within bounding box as actual
-#             - setting all other depth_values to MAX_DEPTH
-#         I.e. all other stuff is deleted
-        
-#     '''
-#     with open(filename, mode='rb') as f:
-        
-        
-        
-#         ## be careful here thats not the way of deep_prior
-#         ### thus we have commented this line!
-#         #depth_image[depth_image == 0] = max_depth 
-#         ## in deep_prior max_depth is kept at 0 and only changed in the end.
-
-#         ## plot here to see how it looks like
-
-#         return depth_image
 
 
 
@@ -68,7 +45,7 @@ class Num2Str(object):
 
 class HandPoseActionDataset(Dataset):
     def __init__(self, root, data_mode, task_mode, transform=None, reduce=False,
-                retrieve_depth=True, preload_depth=False):
+                retrieve_depth=True, preload_depth=False, wrist_com=False):
         '''
             `data_mode` => 'train' // 'test'
             `reduce` => Train only on 1 gesture and 2 subjects, CoM won't work correctly
@@ -77,6 +54,7 @@ class HandPoseActionDataset(Dataset):
             `preload_depth` => Directly load all depth maps from cache file to RAM for faster training
                                requires sufficient RAM, no effect when `retrieve_depth` is False
             
+            `wrist_com` => True: Use Wrist 3D Coord as CoM; False: Use MCP Joint
             Currently this class is used to load data to train a HAR
             Another class
         '''
@@ -87,24 +65,15 @@ class HandPoseActionDataset(Dataset):
         self.min_depth = 100
         self.max_depth = 700
         
-        self.fx_d = 475.065948
-        self.fy_d = 475.065857
-
-        self.px_d = 315.944855   # aka u0_d
-        self.py_d = 245.287079   # aka v0_d
-
-        # depth intrinsic transform matrix
-        self.cam_intr_d = np.array([[self.fx_d, 0, self.px_d],
-                                    [0, self.fy_d, self.py_d], 
-                                    [0, 0, 1]])
-        
         self.joint_num = 21
         self.world_dim = 3
+
+        self.wrist_com = wrist_com
         
-        self.reorder_idx = np.array([
-            0, 1, 6, 7, 8, 2, 9, 10, 11, 3, 12,
-            13, 14, 4, 15, 16, 17, 5, 18, 19, 20
-        ])
+        # self.reorder_idx = np.array([
+        #     0, 1, 6, 7, 8, 2, 9, 10, 11, 3, 12,
+        #     13, 14, 4, 15, 16, 17, 5, 18, 19, 20
+        # ])
         
         self.test_pos = -1
         
@@ -114,7 +83,7 @@ class HandPoseActionDataset(Dataset):
         self.root = root
         self.skeleton_dir = os.path.join(self.root, 'Hand_pose_annotation_v1')
         self.video_dir = os.path.join(self.root, 'Video_files') 
-        self.info_dir = os.path.join(self.root, 'Subjects_info')
+        #self.info_dir = os.path.join(self.root, 'Subjects_info')
         self.subj_dirnames = ['Subject_1'] if reduce else \
             ['Subject_%d' % i for i in range(1, 7)]
         #self.center_dir = center_dir # not in use
@@ -132,8 +101,7 @@ class HandPoseActionDataset(Dataset):
         self.task_mode = TaskMode._value2member_map_[task_mode]
 
         self.transform = transform
-        #self.use_refined_com = use_refined_com not in use
-
+        
         # currently a very weak check, only checks for skeletons
         if not self._check_exists(): raise RuntimeError('Invalid Hand Pose Action Dataset')
 
@@ -146,8 +114,13 @@ class HandPoseActionDataset(Dataset):
         self.coms_world = []
         self.actions = []
         self.depthmaps = []
+        self.aug_modes = None
+        self.aug_params = None
 
-        
+        self.RAND_SEED = 0 
+
+        self.ignore_cache_for_hpe = False # 
+        self.ignore_cache_for_har = False
         self._load()
 
         self.retrieve_depth = retrieve_depth
@@ -161,6 +134,9 @@ class HandPoseActionDataset(Dataset):
         ## bugs with this... 
         ## see https://discuss.pytorch.org/t/dataloader-when-num-worker-0-there-is-bug/25643/16
         self.depthmap_cachefile = None
+
+        #print("Names:")
+        #[print(name) for name in self.names[108:115]]
     
 
     def __getitem__(self, index):
@@ -168,11 +144,11 @@ class HandPoseActionDataset(Dataset):
         ## this function is called internally by pytorch whenever a new sample needs to
         ## be loaded.
         #depthmap = load_depthmap(self.names[index], self.img_width, self.img_height, self.max_depth)
-        # any depth to allow 16-it images as the depths are 16-bit here
+        # any depth to allow 16-it images as the depths are 16-bit here, use option to load from file here 
 
         ## need to do this here cause of bug
         if self.depthmap_cachefile is None and self.retrieve_depth is True \
-           and self.preload_depth is False:
+           and self.preload_depth is False and self.ignore_cache_for_hpe is False and self.ignore_cache_for_har is False:
             self.depthmap_cachefile = h5py.File(self.depthmap_cachepath, 'r', libver='latest', swmr=True)
 
         if self.task_mode == TaskMode.HAR:
@@ -186,6 +162,11 @@ class HandPoseActionDataset(Dataset):
                 DT.JOINTS_SEQ: self.joints_world[index], # 3d joints => R^{NUM_FRAMES x 63}
                 DT.COM_SEQ: self.coms_world[index], # => R^{NUM_FRAMES x 3}
                 DT.DEPTH_SEQ: None if self.retrieve_depth is False \
+                              else np.stack(
+                                                [np.asarray(Image.open(img_path), dtype=np.uint16) for \
+                                                    img_path in self.names[index]]
+                                            ) \
+                              if self.ignore_cache_for_har \
                               else self.depthmap_cachefile[self.num2str(index)].value \
                               if self.preload_depth is False \
                               else self.depthmaps[index], #depthmaps => R^{NUM_FRAMES x 480 x 640}
@@ -200,12 +181,14 @@ class HandPoseActionDataset(Dataset):
                 DT.JOINTS: self.joints_world[index], # 3d joints of the sample => R^{63}
                 DT.COM: self.coms_world[index], # => R^{3}
                 DT.DEPTH: None if self.retrieve_depth is False \
+                          else np.asarray(Image.open(self.names[index]), dtype=np.uint16) \
+                          if self.ignore_cache_for_hpe \
                           else self.depthmap_cachefile[self.num2str(0)][index] \
                           if self.preload_depth is False \
                           else self.depthmaps[index], #depthmap => R^{480 x 640}
                 DT.ACTION: self.actions[index], # action => R^{1}
-                DT.AUG_MODE: None, # if self.aug_modes is None else self.aug_modes[index],
-                DT.AUG_PARAMS: None, # if self.aug_params is None else self.aug_params[index]
+                DT.AUG_MODE: None if self.aug_modes is None else self.aug_modes[index],
+                DT.AUG_PARAMS: None if self.aug_params is None else self.aug_params[index]
             }
 
         #print("SHAPE::: ", sample[DT.DEPTH_SEQ].shape, "DTYPE::: ", sample[DT.DEPTH_SEQ].dtype)
@@ -263,9 +246,9 @@ class HandPoseActionDataset(Dataset):
                 # e.g. Subject_1/open_juice_bottle/2 0
                 self.names.append(
                     [os.path.join(self.video_dir, line, 'depth', img) for img in \
-                        os.listdir(
+                        sorted(os.listdir(
                             os.path.join(self.video_dir, line, 'depth')
-                        )
+                        ))
                     ]
                 )
 
@@ -278,10 +261,17 @@ class HandPoseActionDataset(Dataset):
                     ).astype(np.float32)
                 )
 
-                # get gt middle_mcp world co-ords x,y,z of current sample (last item appended)
-                self.coms_world.append(
-                    self.joints_world[-1][:, 3*self.world_dim : 3*self.world_dim+3]
-                )
+                if not self.wrist_com:
+                    # get gt middle_mcp world co-ords x,y,z of current sample (last item appended)
+                    # default option // old option
+                    self.coms_world.append(
+                        self.joints_world[-1][:, 3*self.world_dim : 3*self.world_dim+3]
+                    )
+                else:
+                    # use wrist as CoM
+                    self.coms_world.append(
+                        self.joints_world[-1][:, 0 : 3] ## now this is wrist point only for testing
+                    )
 
                 self.actions.append(
                     int(action_idx_str)
@@ -290,11 +280,12 @@ class HandPoseActionDataset(Dataset):
             elif self.task_mode == TaskMode.HPE:
                 # add frame_wise
                 # we merge list with list of new items
+                # NEW: FIXED DIR LISTING WHICH CAUSED WRONG DEPTHMAPS ASSOCIATED WITH KEYPOINTS FROM TXT. NOW LIST IS SORTED
                 self.names += \
                     [os.path.join(self.video_dir, line, 'depth', img) for img in \
-                        os.listdir(
+                        sorted(os.listdir(
                             os.path.join(self.video_dir, line, 'depth')
-                        )
+                        ))
                     ]
 
                 new_joints_lst = \
@@ -304,9 +295,14 @@ class HandPoseActionDataset(Dataset):
                 self.joints_world += new_joints_lst
                 
                 # sample is 1D np.array, we extract mcp xyz from last added samples
-                self.coms_world += \
-                    [sample[3*self.world_dim : 3*self.world_dim+3] for \
-                         sample in new_joints_lst]
+                if not self.wrist_com:
+                    self.coms_world += \
+                        [sample[3*self.world_dim : 3*self.world_dim+3] for \
+                             sample in new_joints_lst]
+                else:
+                    self.coms_world += \
+                        [sample[0 : 3] for \
+                            sample in new_joints_lst] # now wrist
 
                 
                 # all samples in seq must have the same action label
@@ -535,6 +531,36 @@ class HandPoseActionDataset(Dataset):
                 self.action_class_dict[i] = line.split(' ')[1]
                
             self.action_classes = len(self.action_class_dict)
+    
+
+    def make_transform_params_static(self, AugType: IntEnum, getAugModeParamFn: Callable[[List[IntEnum]], Any],
+                                     custom_aug_modes:List[IntEnum]=None):
+        '''
+            If no randomisation is requested then try to produce deterministic params for transformation.
+            Because this requires knowledge of how many samples exist it cannot be done by transformers
+            Instead params will be supplied by dataset __call__ function along with the usual stuff
+        '''
+        print("[FHAD] Note: Using deterministic params for transformation!")
+        
+        ## now do something
+        if custom_aug_modes is not None:
+            print("[FHAD] Using Supplied AugModes: %a" % custom_aug_modes)
+            valid_aug_modes = np.array(custom_aug_modes)
+        else:
+            valid_aug_modes = np.arange(len(AugType))
+            print("[FHAD] Using ALL AugModes: %a" % valid_aug_modes)
+        
+        #print("[MSRA] AugModeLims (RotAbsLim, ScaleStd, TransStd): ", self.aug_lims.abs_rot_lim_deg,
+        #        self.aug_lims.scale_std, self.aug_lims.trans_std)
+        ## reset seed
+        np.random.seed(self.RAND_SEED)
+        self.aug_modes = np.random.choice(valid_aug_modes, replace=True, size=len(self))
+        self.aug_modes = list(map(lambda i: AugType(i), self.aug_modes)) # convert to enumtype
+        
+        self.aug_params = [
+            getAugModeParamFn([aug_mode]) \
+                                for aug_mode in self.aug_modes
+        ]
 
 
 

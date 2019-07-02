@@ -1,0 +1,47 @@
+name: BaselineLSTM
+n_gpu: 1
+dtype: float
+arch:
+  type: BaselineHARModel
+  args:
+    in_frame_dim: 63
+    num_hidden_layers: 1
+    use_unrolled_lstm: true
+    attention_type: v5
+data_loader:
+  type: JointsActionDataLoader
+  args:
+    data_dir: datasets/hand_pose_action
+    dataset_type: train
+    batch_size: 20
+    shuffle: true
+    validation_split: -0.2
+    num_workers: 8
+    pad_sequence: true
+    max_pad_length: 120
+    randomise_params: false
+    load_depth: false
+    use_pca: false
+    debug: false
+    use_wrist_com: false
+    norm_keypt_dist: false
+optimizer:
+  type: Adam
+  args:
+    lr: 0.003
+    weight_decay: 0
+    amsgrad: true
+loss: nll_loss
+metrics:
+- top1_acc
+- top3_acc
+trainer:
+  epochs: 300
+  save_dir: saved/
+  save_period: 500
+  verbosity: 2
+  persistent_storage: true
+  monitor: max val_top1_acc
+  early_stop: 100
+  tensorboardX: true
+  log_dir: logs

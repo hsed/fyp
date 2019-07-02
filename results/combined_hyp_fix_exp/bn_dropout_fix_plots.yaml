@@ -1,0 +1,27 @@
+# all paths are relative to root folder!
+# $> python results\plot_learn_curve.py -c results\data.yaml
+# need two tags!
+
+# fixed means eval mode!!
+model_name: HPE 
+title: "Combined Model Batch Norm. \\& Dropout Adjustments"
+scalar_tag: avg_3d_err_mm
+scalar_tag_2: top1_acc
+axis_title: "Avg 3D Error (mm)" # this will be Prepended with Train/Valid
+axis_title_2: "Top1 Acc (\\%)"
+max_epochs: 5
+runs:
+  - "0616_1226" # "0610_1511"
+  - "0610_1617" # baseline
+  - "0616_1211" #"0610_1703" # v1 -- concat type 1
+  - "0610_1634" # v2 -- concat type 2
+run_tags:
+  - "BN=Train, Dropout=Train"
+  - "BN=Fixed, Dropout=Train"
+  - "BN=Train, Dropout=Fixed"
+  - "\\textbf{BN=Fixed, Dropout=Fixed}"
+legend_loc: 
+base_path: results/combined_hyp_fix_exp/logs
+save_path: results/plot_pdfs/combined_bn_dropout_fix.pdf
+x_ticks: 7 # good number for 30 epochs
+fig_size: [10, 8]

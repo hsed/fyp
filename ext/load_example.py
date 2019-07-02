@@ -1,3 +1,8 @@
+'''
+    Source: https://github.com/guiggh/hand_pose_action/blob/master/load_example.py
+'''
+
+
 import argparse
 import os
 import numpy as np

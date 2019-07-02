@@ -1,0 +1,30 @@
+# all paths are relative to root folder!
+# $> python results\plot_learn_curve.py -c results\data.yaml
+# need two tags!
+
+model_name: HPE 
+title: "Combined Model Dual HPE Training Experiments ($\\eta = \\zeta = 0.5$)"
+scalar_tag: avg_3d_err_mm
+scalar_tag_2: top1_acc
+axis_title: "Avg 3D Error (mm)" # this will be Prepended with Train/Valid
+axis_title_2: "Top1 Acc (\\%)"
+max_epochs: 30
+runs:
+  - "0609_2057"
+  - "0609_2103" 
+  #- "0609_1929"
+  - "0612_1359" #"0609_1533" # NEW BEST BASELINE!!
+  #- "0609_1636" 
+  - "0609_1814" 
+run_tags:
+  - "Baseline"
+  - "$p_{eq}=1.0$"
+  #- "$p_{eq}=0.99$"
+  - "$p_{eq}=0.95$"
+  #- "$p_{eq}=0.9$" # faster than linear, similar num of params but sparser gradients during backprop as idx select worse results
+  - "$p_{eq}=0.8$"
+legend_loc: 2
+base_path: results/combined_new_exp/logs
+save_path: results/plot_pdfs/combined_v11d_two_hpe_train.pdf
+x_ticks: 5 # good number for 30 epochs
+fig_size: [10, 8]
