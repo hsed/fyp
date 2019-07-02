@@ -160,7 +160,7 @@ Note that an Nvidia CUDA 10.0 compatible GPU is required. If that is not the cas
 ---
 
 ## Acknowledgements
-Where possible this document aims to acknoledges sources used for this project.
+<!-- Where possible this document aims to acknowledge sources used for this project. -->
 
 ### Main Structure
 Template from https://github.com/victoresque/pytorch-template. See `LICENSE-1` for details on the license.
