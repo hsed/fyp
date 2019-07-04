@@ -45,6 +45,11 @@ of the individual components within this approach are investigated.
 \* Note that these results are reported using ground truth hand poses which is practically infeasible and is only presented to show the best achievable score.
 
 
+---
+
+## Presentation 
+A pdf presentation showcasing this project can be found [here](https://github.com/hsed/fyp/blob/master/doc/presentation.pdf).
+
 
 ---
 
@@ -148,12 +153,22 @@ Note that an Nvidia CUDA 10.0 compatible GPU is required. If that is not the cas
 | Model | Command |
 | ----  | --------|
 | HPE Standalone | `python train.py -c configs/hpe/hpe_baseline.yaml` |
-| HAR Standalone <br> (GT Pose*) | `python train.py -c configs/har/har_baseline.yaml` |
+| HAR Standalone <br> (GT Pose) | `python train.py -c configs/har/har_baseline.yaml` |
 | Baseline (No Train) | `python train.py -c configs/combined/combined_simple_dual_train.yaml -nt` |
 | Baseline (Train) | `python train.py -c configs/combined/combined_simple_dual_train.yaml` |
 | Proposed Method #1 | `python train.py -c configs/combined/combined_feedback_dual_train.yaml` |
 | Proposed Method #2 | `python train.py -c configs/combined/combined_two_hpe_feedback_dual_train.yaml` |
 | Proposed Method #2 <br>(+ Attention) | `python train.py -c configs/combined/combined_two_hpe_feedback_dual_train_atten.yaml` |
+
+
+
+
+---
+
+## Visual Results
+Plots can be found in the `results` folder, highlighted plots will be added here in the future.
+
+
 
 
 
@@ -170,17 +185,6 @@ https://github.com/guiggh/hand_pose_action
 
 ### Some Helper Utils and Transformers
 https://github.com/dragonbook/V2V-PoseNet-pytorch
-
-
-
----
-
-## Visual Results
-TBC
-
-
-
-
 
 
 
