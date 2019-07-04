@@ -45,7 +45,7 @@ of the individual components within this approach are investigated.
 \* Note that these results are reported using ground truth hand poses which is practically infeasible and is only presented to show the best achievable score.
 
 
----
+
 
 ## Presentation 
 A pdf presentation showcasing this project can be found [here](https://github.com/hsed/fyp/blob/master/doc/presentation.pdf).
@@ -134,6 +134,7 @@ A pdf presentation showcasing this project can be found [here](https://github.co
 
 
 ## Code Instructions
+### Summary
 All models can be trained with the exact same configuration as used for the reported results. Depending on OS, CUDA, Python and Pytorch versions, results may slightly vary. The most prominent experiments have their own configuration file which can be passed as a command-line argument to the pain entry-point file for training: `train.py`.
 
 Combined models require pre-training and then fine-tuning. A cache of some pre-trained models will be provided in the future. Please observe the config files to see where to make changes as appropriate for the save locations of the pre-trained file.
@@ -177,10 +178,10 @@ Plots can be found in the `results` folder, highlighted plots will be added here
 ## Acknowledgements
 <!-- Where possible this document aims to acknowledge sources used for this project. -->
 
-### Main Structure
+### Repo Structure
 Template from https://github.com/victoresque/pytorch-template. See `LICENSE-1` for details on the license.
 
-### Dataset + Hand Model Image + Most Details
+### Dataset, Data Loading and Plotting Utils
 https://github.com/guiggh/hand_pose_action
 
 ### Some Helper Utils and Transformers
