@@ -35,7 +35,7 @@ of the individual components within this approach are investigated.
 | Baseline (No Train) | 14.49 | 59.0 |
 | Baseline (Train) | 10.87 | 68.0 |
 | Proposed Method #1 | 10.95 | 68.2 |
-| Proposed Method | 10.72 | 71.0 |
+| Proposed Method #2 | 10.72 | 71.0 |
 | Proposed Method #2 <br>(+ Attention) | 10.69 | 71.3 |
 
 
